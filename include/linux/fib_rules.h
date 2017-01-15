@@ -47,6 +47,7 @@ enum
 	FRA_UNUSED8,
 	FRA_TABLE,	/* Extended table id */
 	FRA_FWMASK,	/* mask for netfilter mark */
+	FRA_OIFNAME,
 	__FRA_MAX
 };
 

@@ -142,7 +142,7 @@ static int proc_read_mtsched(char *page, char **start, off_t off,
  * Write to perf counter registers based on text input
  */
 
-#define TXTBUFSZ 1024
+#define TXTBUFSZ 992
 
 static int proc_write_mtsched(struct file *file, const char *buffer, 
 				unsigned long count, void *data)
@@ -153,7 +153,7 @@ static int proc_write_mtsched(struct file *file, const char *buffer,
 	char entity[1];   //, entity1[1];
 	int number[1];
 	unsigned long value[1];
-	int nparsed = 0 , index = 0;
+	int nparsed __maybe_unused = 0, index = 0;
 	unsigned long flags;
 	unsigned int mtflags;
 	unsigned int haltstate;

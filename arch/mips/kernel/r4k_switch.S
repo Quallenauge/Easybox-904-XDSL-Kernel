@@ -23,6 +23,9 @@
 
 #include <asm/asmmacro.h>
 
+/* preprocessor replaces the fp in ".set fp=64" with $30 otherwise */
+#undef fp
+
 /*
  * Offset to the current process status flags, the first 32 bytes of the
  * stack are not used.
@@ -151,6 +154,8 @@ LEAF(_restore_fp)
  */
 
 #define FPU_DEFAULT  0x00000000
+	.set push
+	SET_HARDFLOAT
 
 LEAF(_init_fpu)
 #ifdef CONFIG_MIPS_MT_SMTC
@@ -250,3 +255,4 @@ LEAF(_init_fpu)
 #endif
 	jr	ra
 	END(_init_fpu)
+	.set pop	/* SET_HARDFLOAT */

@@ -2,6 +2,8 @@
 # Makefile for the Linux network (ethercard) device drivers.
 #
 
+-include $(srctree)/drivers/net/Makefile.ifx
+
 obj-$(CONFIG_MII) += mii.o
 obj-$(CONFIG_MDIO) += mdio.o
 obj-$(CONFIG_PHYLIB) += phy/
@@ -287,4 +289,4 @@ obj-$(CONFIG_SFC) += sfc/
 
 obj-$(CONFIG_WIMAX) += wimax/
 
--include $(srctree)/drivers/net/Makefile.ifx
+

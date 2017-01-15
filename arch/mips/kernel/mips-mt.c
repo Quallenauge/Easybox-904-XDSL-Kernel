@@ -103,7 +103,8 @@ void configure_tlb(void)
                         tlbsiz = (((config1val >> 25) & 0x3f) + 1);
                         if (tlbsiz > 64)
                                 tlbsiz = 64;
-                        cpu_data[0].tlbsize = current_cpu_data.tlbsize = tlbsiz;
+                        current_cpu_data.tlbsize = tlbsiz;
+                        cpu_data[0].tlbsize = current_cpu_data.tlbsize;
                 }
 
        }
