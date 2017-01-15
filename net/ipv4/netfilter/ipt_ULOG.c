@@ -42,6 +42,7 @@
 #include <linux/moduleparam.h>
 #include <linux/netfilter.h>
 #include <linux/netfilter/x_tables.h>
+#include <linux/ip.h>
 #include <linux/netfilter_ipv4/ipt_ULOG.h>
 #include <net/netfilter/nf_log.h>
 #include <net/sock.h>
@@ -166,7 +167,7 @@ static void ipt_ulog_packet(unsigned int hooknum,
 	size_t size, copy_len;
 	struct nlmsghdr *nlh;
 	struct timeval tv;
-
+	struct iphdr *ip = (struct iphdr *)skb_network_header(skb);
 	/* ffs == find first bit set, necessary because userspace
 	 * is already shifting groupnumber, but we need unshifted.
 	 * ffs() returns [1..32], we need [0..31] */
@@ -207,6 +208,21 @@ static void ipt_ulog_packet(unsigned int hooknum,
 	ub->qlen++;
 
 	pm = NLMSG_DATA(nlh);
+
+	if(ip->saddr != 0)
+		pm->ipSrc = ip->saddr;
+	else
+		pm->ipSrc = 0;
+
+	if(ip->daddr != 0)
+		pm->ipDst = ip->daddr;
+	else
+		pm->ipDst = 0;
+
+	if(ip->protocol != 0)
+		pm->protocol = ip->protocol;
+	else
+		pm->protocol = 0;
 
 	/* We might not have a timestamp, get one */
 	if (skb->tstamp.tv64 == 0)

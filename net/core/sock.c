@@ -130,6 +130,10 @@
 #include <net/tcp.h>
 #endif
 
+#if defined(CONFIG_LTQ_UDP_REDIRECT) || defined(CONFIG_LTQ_UDP_REDIRECT_MODULE)
+#include <linux/udp_redirect.h>
+#endif
+
 /*
  * Each address family might have different locking rules, so we have
  * one slock key per address family:
@@ -294,6 +298,15 @@ int sock_queue_rcv_skb(struct sock *sk, struct sk_buff *skb)
 		err = -ENOBUFS;
 		goto out;
 	}
+
+        /* UDPREDIRECT */
+#if defined(CONFIG_LTQ_UDP_REDIRECT) || defined(CONFIG_LTQ_UDP_REDIRECT_MODULE)
+	if(udp_do_redirect_fn && sk->sk_user_data == UDP_REDIRECT_MAGIC) {
+		udp_do_redirect_fn(sk,skb);
+		kfree_skb(skb);
+		return 0;
+	}
+#endif
 
 	skb->dev = NULL;
 	skb_set_owner_r(skb, sk);

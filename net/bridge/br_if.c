@@ -131,6 +131,10 @@ static void del_nbp(struct net_bridge_port *p)
 	struct net_bridge *br = p->br;
 	struct net_device *dev = p->dev;
 
+#ifdef CONFIG_IFX_IGMP_SNOOPING
+	br_mcast_port_cleanup(p);
+#endif
+
 	sysfs_remove_link(br->ifobj, dev->name);
 
 	dev_set_promiscuity(dev, -1);
@@ -258,6 +262,10 @@ static struct net_bridge_port *new_nbp(struct net_bridge *br,
 	p->port_no = index;
 	p->flags = 0;
 	br_init_port(p);
+#ifdef CONFIG_IFX_IGMP_SNOOPING
+	br_mcast_port_init(p);
+	spin_lock_init(&p->mghash_lock);
+#endif
 	p->state = BR_STATE_DISABLED;
 	br_stp_port_timer_init(p);
 
@@ -431,6 +439,10 @@ int br_add_if(struct net_bridge *br, struct net_device *dev)
 
 	kobject_uevent(&p->kobj, KOBJ_ADD);
 
+#ifdef CONFIG_IFX_IGMP_SNOOPING
+	br_ifinfo_notify(RTM_NEWLINK, p);
+#endif
+
 	return 0;
 err2:
 	br_fdb_delete_by_port(br, p, 1);
@@ -459,6 +471,9 @@ int br_del_if(struct net_bridge *br, struct net_device *dev)
 	br_stp_recalculate_bridge_id(br);
 	br_features_recompute(br);
 	spin_unlock_bh(&br->lock);
+#ifdef CONFIG_IFX_IGMP_SNOOPING
+	br_ifinfo_notify(RTM_DELLINK, p);
+#endif
 
 	return 0;
 }

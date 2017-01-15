@@ -157,9 +157,14 @@ static void __cpuinit vsmp_init_secondary(void)
 	if (gic_present)
 		change_c0_status(ST0_IM, STATUSF_IP3 | STATUSF_IP4 |
 					 STATUSF_IP6 | STATUSF_IP7);
-	else
+	else {
+#if defined(CONFIG_AR9) || defined(CONFIG_VR9)
+		set_c0_status(ST0_IM); //enable all the interrupt lines.
+#else
 		change_c0_status(ST0_IM, STATUSF_IP0 | STATUSF_IP1 |
 					 STATUSF_IP6 | STATUSF_IP7);
+#endif
+	}
 }
 
 static void __cpuinit vsmp_smp_finish(void)

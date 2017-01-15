@@ -59,3 +59,5 @@ obj-$(CONFIG_CPU_CAVIUM_OCTEON)	+= pci-octeon.o pcie-octeon.o
 ifdef CONFIG_PCI_MSI
 obj-$(CONFIG_CPU_CAVIUM_OCTEON)	+= msi-octeon.o
 endif
+
+-include $(srctree)/arch/mips/pci/Makefile.ifx

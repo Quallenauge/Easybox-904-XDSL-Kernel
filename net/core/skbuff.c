@@ -72,6 +72,9 @@
 
 static struct kmem_cache *skbuff_head_cache __read_mostly;
 static struct kmem_cache *skbuff_fclone_cache __read_mostly;
+#if defined(CONFIG_IMQ) || defined(CONFIG_IMQ_MODULE)
+static struct kmem_cache *skbuff_cb_store_cache __read_mostly;
+#endif
 
 static void sock_pipe_buf_release(struct pipe_inode_info *pipe,
 				  struct pipe_buffer *buf)
@@ -91,6 +94,83 @@ static int sock_pipe_buf_steal(struct pipe_inode_info *pipe,
 	return 1;
 }
 
+#if defined(CONFIG_IMQ) || defined(CONFIG_IMQ_MODULE)
+/* Control buffer save/restore for IMQ devices */
+struct skb_cb_table {
+	void			*cb_next;
+	atomic_t		refcnt;
+	char      		cb[48];
+};
+
+static DEFINE_SPINLOCK(skb_cb_store_lock);
+
+int skb_save_cb(struct sk_buff *skb)
+{
+	struct skb_cb_table *next;
+
+	next = kmem_cache_alloc(skbuff_cb_store_cache, GFP_ATOMIC);
+	if (!next)
+		return -ENOMEM;
+
+	BUILD_BUG_ON(sizeof(skb->cb) != sizeof(next->cb));
+
+	memcpy(next->cb, skb->cb, sizeof(skb->cb));
+	next->cb_next = skb->cb_next;
+
+	atomic_set(&next->refcnt, 1);
+
+	skb->cb_next = next;
+	return 0;
+}
+EXPORT_SYMBOL(skb_save_cb);
+
+int skb_restore_cb(struct sk_buff *skb)
+{
+	struct skb_cb_table *next;
+
+	if (!skb->cb_next)
+		return 0;
+
+	next = skb->cb_next;
+
+	BUILD_BUG_ON(sizeof(skb->cb) != sizeof(next->cb));
+
+	memcpy(skb->cb, next->cb, sizeof(skb->cb));
+	skb->cb_next = next->cb_next;
+
+	spin_lock(&skb_cb_store_lock);
+
+	if (atomic_dec_and_test(&next->refcnt)) {
+		kmem_cache_free(skbuff_cb_store_cache, next);
+	}
+
+	spin_unlock(&skb_cb_store_lock);
+
+	return 0;
+}
+EXPORT_SYMBOL(skb_restore_cb);
+
+static void skb_copy_stored_cb(struct sk_buff *new, const struct sk_buff *__old)
+{
+	struct skb_cb_table *next;
+	struct sk_buff *old;
+
+	if (!__old->cb_next) {
+		new->cb_next = NULL;
+		return;
+	}
+
+	spin_lock(&skb_cb_store_lock);
+
+	old = (struct sk_buff *)__old;
+
+	next = old->cb_next;
+	atomic_inc(&next->refcnt);
+	new->cb_next = next;
+
+	spin_unlock(&skb_cb_store_lock);
+}
+#endif
 
 /* Pipe buffer operations for a socket. */
 static struct pipe_buf_operations sock_pipe_buf_ops = {
@@ -259,9 +339,9 @@ struct sk_buff *__netdev_alloc_skb(struct net_device *dev,
 	int node = dev->dev.parent ? dev_to_node(dev->dev.parent) : -1;
 	struct sk_buff *skb;
 
-	skb = __alloc_skb(length + NET_SKB_PAD, gfp_mask, 0, node);
+	skb = __alloc_skb(length + NET_SKB_PAD_ALLOC, gfp_mask, 0, node);
 	if (likely(skb)) {
-		skb_reserve(skb, NET_SKB_PAD);
+		skb_reserve(skb, NET_SKB_PAD_ALLOC);
 		skb->dev = dev;
 	}
 	return skb;
@@ -398,6 +478,26 @@ static void skb_release_head_state(struct sk_buff *skb)
 		WARN_ON(in_irq());
 		skb->destructor(skb);
 	}
+#if defined(CONFIG_IMQ) || defined(CONFIG_IMQ_MODULE)
+	/* This should not happen. When it does, avoid memleak by restoring
+	the chain of cb-backups. */
+	while(skb->cb_next != NULL) {
+		if (net_ratelimit())
+			printk(KERN_WARNING "IMQ: kfree_skb: skb->cb_next: "
+				"%08x\n", (unsigned int)skb->cb_next);
+
+		skb_restore_cb(skb);
+	}
+	/* This should not happen either, nf_queue_entry is nullified in
+	 * imq_dev_xmit(). If we have non-NULL nf_queue_entry then we are
+	 * leaking entry pointers, maybe memory. We don't know if this is
+	 * pointer to already freed memory, or should this be freed.
+	 * If this happens we need to add refcounting, etc for nf_queue_entry.
+	 */
+	if (skb->nf_queue_entry && net_ratelimit())
+		printk(KERN_WARNING
+				"IMQ: kfree_skb: skb->nf_queue_entry != NULL");
+#endif
 #if defined(CONFIG_NF_CONNTRACK) || defined(CONFIG_NF_CONNTRACK_MODULE)
 	nf_conntrack_put(skb->nfct);
 	nf_conntrack_put_reasm(skb->nfct_reasm);
@@ -535,6 +635,9 @@ static void __copy_skb_header(struct sk_buff *new, const struct sk_buff *old)
 	new->sp			= secpath_get(old->sp);
 #endif
 	memcpy(new->cb, old->cb, sizeof(old->cb));
+#if defined(CONFIG_IMQ) || defined(CONFIG_IMQ_MODULE)
+	skb_copy_stored_cb(new, old);
+#endif
 	new->csum		= old->csum;
 	new->local_df		= old->local_df;
 	new->pkt_type		= old->pkt_type;
@@ -2781,7 +2884,42 @@ void __init skb_init(void)
 						0,
 						SLAB_HWCACHE_ALIGN|SLAB_PANIC,
 						NULL);
+#if defined(CONFIG_IMQ) || defined(CONFIG_IMQ_MODULE)
+	skbuff_cb_store_cache = kmem_cache_create("skbuff_cb_store_cache",
+						  sizeof(struct skb_cb_table),
+						  0,
+						  SLAB_HWCACHE_ALIGN|SLAB_PANIC,
+						  NULL);
+#endif
 }
+
+/*
+ * Function to mark priority based on specific criteria
+ */
+int skb_mark_priority(struct sk_buff *skb)
+{
+        unsigned old_priority=skb->priority;
+//#ifdef CONFIG_IFX_IPQOS
+#if 0
+        /*
+         * IPQoS in UGW: added copy of nfmark set in classifier to skb->priority to be used in hardware queues
+         */
+        /* nfmark range = 1-8 if QoS is enabled; priority range = 0-7; else preserve original priority */
+	if(skb->mark)
+	{
+		unsigned new_mark;
+        	new_mark = ((skb->mark >> 6) & NFMARK_SHIFT_MASK);
+        	if (new_mark)
+                	skb->priority = new_mark - 1;
+	}
+
+#else
+        /* TODO: Use DSCP for IP, preserve for others */
+
+#endif /* CONFIG_IFX_IPQOS */
+        return (old_priority);
+}
+EXPORT_SYMBOL(skb_mark_priority);
 
 /**
  *	skb_to_sgvec - Fill a scatter-gather list from a socket buffer

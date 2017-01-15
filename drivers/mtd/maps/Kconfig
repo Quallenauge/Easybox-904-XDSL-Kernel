@@ -557,4 +557,6 @@ config MTD_VMU
 	  To build this as a module select M here, the module will be called
 	  vmu-flash.
 
+source "drivers/mtd/maps/Kconfig.ifx"
+
 endmenu

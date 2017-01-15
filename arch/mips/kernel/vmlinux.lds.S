@@ -40,6 +40,12 @@ SECTIONS
 #endif
 	. = VMLINUX_LOAD_ADDRESS;
 	/* read-only */
+	bridge : {
+		*(bridge)
+	}
+	system : {
+		*(system)
+	}
 	_text = .;	/* Text and read-only data */
 	.text : {
 		TEXT_TEXT

@@ -23,6 +23,11 @@
 #include <linux/netfilter/nf_conntrack_dccp.h>
 #include <linux/netfilter/nf_conntrack_sctp.h>
 #include <linux/netfilter/nf_conntrack_proto_gre.h>
+
+#if (defined CONFIG_NF_CT_PROTO_ESP) || (defined CONFIG_NF_CT_PROTO_ESP_MODULE)
+#include <linux/netfilter/nf_conntrack_proto_esp.h>
+#endif
+
 #include <net/netfilter/ipv6/nf_conntrack_icmpv6.h>
 
 #include <net/netfilter/nf_conntrack_tuple.h>
@@ -34,6 +39,10 @@ union nf_conntrack_proto {
 	struct ip_ct_sctp sctp;
 	struct ip_ct_tcp tcp;
 	struct nf_ct_gre gre;
+#if (defined CONFIG_NF_CT_PROTO_ESP) || (defined CONFIG_NF_CT_PROTO_ESP_MODULE)
+	struct nf_ct_esp esp;
+#endif
+
 };
 
 union nf_conntrack_expect_proto {
@@ -70,7 +79,7 @@ union nf_conntrack_help {
 struct nf_conntrack_helper;
 
 /* Must be kept in sync with the classes defined by helpers */
-#define NF_CT_MAX_EXPECT_CLASSES	3
+#define NF_CT_MAX_EXPECT_CLASSES	4
 
 /* nf_conn feature for connections that have a helper */
 struct nf_conn_help {
@@ -114,6 +123,22 @@ struct nf_conn {
 
 #ifdef CONFIG_NF_CONNTRACK_SECMARK
 	u_int32_t secmark;
+#endif
+
+#if defined(CONFIG_NETFILTER_XT_MATCH_LAYER7) || \
+    defined(CONFIG_NETFILTER_XT_MATCH_LAYER7_MODULE)
+	struct {
+		/*
+		 * e.g. "http". NULL before decision. "unknown" after decision
+		 * if no match.
+		 */
+		char *app_proto;
+		/*
+		 * application layer data so far. NULL after match decision.
+		 */
+		char *app_data;
+		unsigned int app_data_len;
+	} layer7;
 #endif
 
 	/* Storage reserved for other modules: */

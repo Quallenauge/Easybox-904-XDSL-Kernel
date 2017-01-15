@@ -31,3 +31,20 @@ config BRIDGE
 	  will be called bridge.
 
 	  If unsure, say N.
+
+config LTQ_BR_OPT
+       bool "LTQ Bridge Optimizations"
+       depends on  BRIDGE && LTQ_ADDON
+       help
+         If selected, LTQ enhancements to the bridging code would be enabled.
+         This significantly enhances the bridging performance over that of vanilla kernel.
+         It is recommended to be alwyas on.
+
+### ctc ###
+config ARC_BR_PORT_ISOLATION
+	bool "ARC Bridge Port Isolation"
+	depends on  BRIDGE
+	default y
+	help
+	  If selected, bridge port siolation is enabled.
+###########

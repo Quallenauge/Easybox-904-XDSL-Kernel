@@ -1477,4 +1477,6 @@ config SERIAL_BCM63XX_CONSOLE
 	  If you have enabled the serial port on the bcm63xx CPU
 	  you can make it the console by answering Y to this option.
 
+source "drivers/serial/Kconfig.ifx"
+
 endmenu

@@ -94,6 +94,8 @@ source "drivers/accessibility/Kconfig"
 
 source "drivers/infiniband/Kconfig"
 
+source "drivers/Kconfig.ifx"
+
 source "drivers/edac/Kconfig"
 
 source "drivers/rtc/Kconfig"

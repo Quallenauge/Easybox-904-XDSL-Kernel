@@ -63,6 +63,7 @@ static void xhci_hub_descriptor(struct xhci_hcd *xhci,
 
 static unsigned int xhci_port_speed(unsigned int port_status)
 {
+
 	if (DEV_LOWSPEED(port_status))
 		return 1 << USB_PORT_FEAT_LOWSPEED;
 	if (DEV_HIGHSPEED(port_status))
@@ -239,6 +240,11 @@ int xhci_hub_control(struct usb_hcd *hcd, u16 typeReq, u16 wValue,
 		case USB_PORT_FEAT_C_OVER_CURRENT:
 			status = PORT_OCC;
 			port_change_bit = "over-current";
+			break;
+		case USB_PORT_FEAT_ENABLE:
+			status = 0;
+			temp &= ~((u32)PORT_PE);
+			port_change_bit = "enable";
 			break;
 		default:
 			goto error;

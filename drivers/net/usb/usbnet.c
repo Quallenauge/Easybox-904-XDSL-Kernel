@@ -1291,10 +1291,18 @@ usbnet_probe (struct usb_interface *udev, const struct usb_device_id *prod)
 		// can rename the link if it knows better.
 		if ((dev->driver_info->flags & FLAG_ETHER) != 0
 				&& (net->dev_addr [0] & 0x02) == 0)
+		  #if 1 //ctc
+			strcpy( net->name, "usbeth%d" ); // rename ethN as usbethN
+		  #else
 			strcpy (net->name, "eth%d");
+		  #endif
 		/* WLAN devices should always be named "wlan%d" */
 		if ((dev->driver_info->flags & FLAG_WLAN) != 0)
+		  #if 1 //ctc
+			strcpy(net->name, "usbwlan%d");
+		  #else
 			strcpy(net->name, "wlan%d");
+		  #endif
 
 		/* maybe the remote can't receive an Ethernet MTU */
 		if (net->mtu > (dev->hard_mtu - net->hard_header_len))

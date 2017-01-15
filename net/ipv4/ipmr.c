@@ -63,6 +63,9 @@
 #include <net/checksum.h>
 #include <net/netlink.h>
 
+#if defined(CONFIG_IFX_PPA_API) || defined(CONFIG_IFX_PPA_API_MODULE)
+  #include <net/ifx_ppa_api.h>
+#endif
 #if defined(CONFIG_IP_PIMSM_V1) || defined(CONFIG_IP_PIMSM_V2)
 #define CONFIG_IP_PIMSM	1
 #endif
@@ -554,7 +557,12 @@ static struct mfc_cache *ipmr_cache_alloc_unres(struct net *net)
 	if (c == NULL)
 		return NULL;
 	skb_queue_head_init(&c->mfc_un.unres.unresolved);
+	/* Terry 20120912, Increase multicast un-cached multicast packets response time to mrouted */
+#if 1
+	c->mfc_un.unres.expires = jiffies + 1*HZ;
+#else
 	c->mfc_un.unres.expires = jiffies + 10*HZ;
+#endif
 	mfc_net_set(c, net);
 	return c;
 }
@@ -727,6 +735,7 @@ ipmr_cache_unresolved(struct net *net, vifi_t vifi, struct sk_buff *skb)
 		 *	Reflect first query at mrouted.
 		 */
 		err = ipmr_cache_report(net, skb, vifi, IGMPMSG_NOCACHE);
+
 		if (err < 0) {
 			/* If the report failed throw the cache entry
 			   out - Brad Parker
@@ -779,6 +788,49 @@ static int ipmr_mfc_delete(struct net *net, struct mfcctl *mfc)
 			*cp = c->next;
 			write_unlock_bh(&mrt_lock);
 
+#if 0
+#if defined(CONFIG_IFX_PPA_API) || defined(CONFIG_IFX_PPA_API_MODULE)
+            if ( ppa_hook_mc_group_get_fn != NULL && ppa_hook_mc_group_update_fn != NULL )
+            {
+                PPA_MC_GROUP ppa_mc_entry = {0}, ppa_mc_entry_cmp = {0};
+                int n, idx;
+
+                ppa_hook_mc_group_get_fn(c->mfc_mcastgrp, &ppa_mc_entry_cmp, 0);
+
+                ppa_mc_entry.if_mask = ppa_mc_entry_cmp.if_mask;
+                for ( n = c->mfc_un.res.minvif; n < c->mfc_un.res.maxvif; n++ )
+                {
+                    int i;
+                    struct net_device *dev = NULL;
+
+                    dev = net->ipv4.vif_table[n].dev;
+                    for ( i = 0, idx = 0; i < ppa_mc_entry_cmp.num_ifs; i++ )
+                    {
+#ifdef CONFIG_IFX_MCAST_FASTPATH
+							if (( strcmp(dev->name, ppa_mc_entry_cmp.array_mem_ifs[i].ifname) == 0 )
+							      || ( memcmp(dev->name, "br", 2) == 0 ))
+#else
+							if ( strcmp(dev->name, ppa_mc_entry_cmp.array_mem_ifs[i].ifname) == 0 )
+#endif
+							{
+                            	ppa_mc_entry.if_mask &= ~(1 << idx);
+							}
+                    }
+#ifdef CONFIG_IFX_MCAST_FASTPATH
+					ppa_mc_entry.array_mem_ifs[idx].ifname = "eth0"; // FIXME:
+#else
+					ppa_mc_entry.array_mem_ifs[idx].ifname = dev->name;
+#endif
+                    ppa_mc_entry.array_mem_ifs[idx].ttl = c->mfc_un.res.ttls[n];
+                    ppa_mc_entry.ip_mc_group = c->mfc_mcastgrp;
+                    ppa_mc_entry.num_ifs++;
+                    idx++;
+                }
+
+                ppa_hook_mc_group_update_fn(&ppa_mc_entry, 0);
+            }
+#endif
+#endif
 			ipmr_cache_free(c);
 			return 0;
 		}
@@ -823,6 +875,42 @@ static int ipmr_mfc_add(struct net *net, struct mfcctl *mfc, int mrtsock)
 	ipmr_update_thresholds(c, mfc->mfcc_ttls);
 	if (!mrtsock)
 		c->mfc_flags |= MFC_STATIC;
+
+#if 0
+#if defined(CONFIG_IFX_PPA_API) || defined(CONFIG_IFX_PPA_API_MODULE)
+    if ( ppa_hook_mc_group_update_fn != NULL )
+    {
+        PPA_MC_GROUP ppa_mc_entry = {0};
+        int n, idx;
+
+        for ( n = c->mfc_un.res.minvif, idx = 0; n < c->mfc_un.res.maxvif; n++ )
+        {
+            if (  VIF_EXISTS(net,n) && c->mfc_un.res.ttls[n] < 255 )
+            {
+                //  only dst itf are added here by kernel
+
+                struct net_device *dev = net->ipv4.vif_table[n].dev;
+#ifdef CONFIG_IFX_MCAST_FASTPATH
+				if( memcmp(dev->name, "br", 2) == 0 )
+					ppa_mc_entry.array_mem_ifs[idx].ifname = "eth0";
+				else
+#endif
+                ppa_mc_entry.array_mem_ifs[idx].ifname = dev->name;
+                ppa_mc_entry.array_mem_ifs[idx].ttl = c->mfc_un.res.ttls[n];
+                ppa_mc_entry.if_mask |= 1 << idx;
+                ppa_mc_entry.ip_mc_group = c->mfc_mcastgrp;
+                ppa_mc_entry.num_ifs++;
+                idx++;
+            }
+        }
+
+        if ( idx > 0 )
+            ppa_mc_entry.src_ifname = net->ipv4.vif_table[c->mfc_parent].dev->name;
+
+        ppa_hook_mc_group_update_fn(&ppa_mc_entry, 0);
+    }
+#endif
+#endif
 
 	write_lock_bh(&mrt_lock);
 	c->next = net->ipv4.mfc_cache_array[line];
@@ -1423,11 +1511,21 @@ int ip_mr_input(struct sk_buff *skb)
 	struct net *net = dev_net(skb->dev);
 	int local = skb_rtable(skb)->rt_flags & RTCF_LOCAL;
 
+#if 0 /* Terry 20120911, debug */
+	{
+		uint8_t *ip_ptr = &ip_hdr(skb)->daddr;
+		printk("[%s] CKPT in. local=%d, daddr=%d.%d.%d.%d\n", __FUNCTION__, local,
+			   ip_ptr[0], ip_ptr[1], ip_ptr[2], ip_ptr[3]);
+	}
+#endif
+
 	/* Packet is looped back after forward, it should not be
 	   forwarded second time, but still can be delivered locally.
 	 */
-	if (IPCB(skb)->flags&IPSKB_FORWARDED)
+	if (IPCB(skb)->flags&IPSKB_FORWARDED) {
+		//printk("[%s] IPSKB_FORWARDED\n", __FUNCTION__);
 		goto dont_forward;
+	}
 
 	if (!local) {
 		    if (IPCB(skb)->opt.router_alert) {
@@ -1453,6 +1551,10 @@ int ip_mr_input(struct sk_buff *skb)
 
 	read_lock(&mrt_lock);
 	cache = ipmr_cache_find(net, ip_hdr(skb)->saddr, ip_hdr(skb)->daddr);
+
+#if 0 /* Terry 20120911, debug */
+	printk("[%s] cache=0x%08x\n", __FUNCTION__, (uint32_t)cache);
+#endif
 
 	/*
 	 *	No usable cache entry

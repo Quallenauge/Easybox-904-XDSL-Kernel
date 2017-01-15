@@ -42,6 +42,14 @@
 #include <linux/errqueue.h>
 #include <asm/uaccess.h>
 
+/* Terry 20130516, Pass MCAST L2 information to userspace */
+#if 1
+#include <linux/if_ether.h>
+/* Terry 20131115, for IP options */
+#include <net/ip.h>
+#include <linux/ip.h>
+#endif
+
 #define IP_CMSG_PKTINFO		1
 #define IP_CMSG_TTL		2
 #define IP_CMSG_TOS		4
@@ -69,6 +77,55 @@ static void ip_cmsg_recv_pktinfo(struct msghdr *msg, struct sk_buff *skb)
 	}
 
 	put_cmsg(msg, SOL_IP, IP_PKTINFO, sizeof(info), &info);
+	
+/* Terry 20130516, Use IP_PKTINFO_MCASTL2 to pass MCAST L2 info to userspace */
+#define	IP_OPT_LEN	4	/* 4*4 bytes */
+/*
+ * 0. swport - LTQ switch port.
+ * 1. rtlswport - RTL switch port.
+ * 2. brport - Bridge port.
+ * 3. brifindex - Bridge interface index.
+ */
+#if 1
+	if (skb->pkt_type == PACKET_MULTICAST) {
+		struct iphdr *iph = (struct iphdr *)(((char *)eth_hdr(skb)) + sizeof(struct ethhdr));
+		
+		if ((iph->protocol == 0x02 /* IGMP */) && iph->ihl >= (5 + IP_OPT_LEN + 1)) {
+			int *ip_opt_ptr = (int *)(((char *)iph) + 5 * sizeof(int));
+			int *new_ip_opt_ptr = NULL;
+			int opt_len = iph->ihl - 5;
+			int i;
+
+			/* Check option header */
+			for (i = 0; i <= (opt_len - (IP_OPT_LEN + 1)); i++) {
+				char *ip_opt_c = &ip_opt_ptr[i];
+				if (ip_opt_c[0] == 0x7F && (ip_opt_c[1] == (IP_OPT_LEN + 1) * 4)) {
+					new_ip_opt_ptr = &ip_opt_ptr[i + 1];
+					break;
+				}
+			}
+			
+			if (new_ip_opt_ptr != NULL) {
+				struct in_pktinfo_mcastl2 mcastl2info;
+				struct ethhdr *eth = eth_hdr(skb);
+				
+				mcastl2info.swport = new_ip_opt_ptr[0];
+				mcastl2info.rtlswport = new_ip_opt_ptr[1];
+				mcastl2info.brport = new_ip_opt_ptr[2];
+				mcastl2info.brifindex = new_ip_opt_ptr[3];
+				mcastl2info.ifindex = info.ipi_ifindex;
+				memcpy(&mcastl2info.src_mac[0], eth->h_source, ETH_ALEN);
+#if 0
+				printk("[%s] mcastl2info.swport %d, mcastl2info.rtlswport %d, mcastl2info.brport %d, mcastl2info.ifindex %d, %02x:%02x:%02x:%02x:%02x:%02x\n",
+						__FUNCTION__, mcastl2info.swport, mcastl2info.rtlswport, mcastl2info.brport, mcastl2info.ifindex, mcastl2info.src_mac[0], mcastl2info.src_mac[1],
+						mcastl2info.src_mac[2], mcastl2info.src_mac[3], mcastl2info.src_mac[4],
+						mcastl2info.src_mac[5]);
+#endif
+				put_cmsg(msg, SOL_IP, IP_PKTINFO_MCASTL2, sizeof(struct in_pktinfo_mcastl2), &mcastl2info);
+			}
+		}
+	}
+#endif
 }
 
 static void ip_cmsg_recv_ttl(struct msghdr *msg, struct sk_buff *skb)

@@ -564,6 +564,7 @@ static netdev_tx_t mpc_send_packet(struct sk_buff *skb,
 	return mpc->old_ops->ndo_start_xmit(skb,dev);
 }
 
+extern void (*ppa_hook_mpoa_setup)(struct atm_vcc *, int, int);
 static int atm_mpoa_vcc_attach(struct atm_vcc *vcc, void __user *arg)
 {
 	int bytes_left;
@@ -603,6 +604,8 @@ static int atm_mpoa_vcc_attach(struct atm_vcc *vcc, void __user *arg)
 
 	vcc->proto_data = mpc->dev;
 	vcc->push = mpc_push;
+    if ( ppa_hook_mpoa_setup )
+		ppa_hook_mpoa_setup(vcc, 3, 1);	//  IPoA, LLC
 
 	return 0;
 }

@@ -541,7 +541,11 @@ config USB_DUMMY_HCD
 # NOTE:  Please keep dummy_hcd LAST so that "real hardware" appears
 # first and will be selected by default.
 
+source "drivers/usb/gadget/Kconfig.ifx"
+
 endchoice
+
+source "drivers/usb/gadget/Kconfig.ifx.opt"
 
 config USB_GADGET_DUALSPEED
 	bool

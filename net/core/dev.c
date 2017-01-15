@@ -96,6 +96,9 @@
 #include <net/net_namespace.h>
 #include <net/sock.h>
 #include <linux/rtnetlink.h>
+#if defined(CONFIG_IMQ) || defined(CONFIG_IMQ_MODULE)
+#include <linux/imq.h>
+#endif
 #include <linux/proc_fs.h>
 #include <linux/seq_file.h>
 #include <linux/stat.h>
@@ -129,6 +132,11 @@
 #include <trace/events/napi.h>
 
 #include "net-sysfs.h"
+
+#if defined(CONFIG_LTQ_UDP_REDIRECT) || defined(CONFIG_LTQ_UDP_REDIRECT_MODULE)
+#include <net/udp.h>
+#include <linux/udp_redirect.h>
+#endif
 
 /* Instead of increasing this, you should create a hash table. */
 #define MAX_GRO_SKBS 8
@@ -170,6 +178,315 @@
 static DEFINE_SPINLOCK(ptype_lock);
 static struct list_head ptype_base[PTYPE_HASH_SIZE] __read_mostly;
 static struct list_head ptype_all __read_mostly;	/* Taps */
+
+
+#ifndef CONFIG_ARC_PPP_ULOG /*ctc*/
+
+ #undef	CONFIG_ARC_PPP_ULOG_DEBUG
+
+#else
+
+ #include <linux/netfilter_bridge/ebt_ulog.h>
+
+ #ifdef CONFIG_ARC_PPP_ULOG_DEBUG
+  static int	ppp_ulog_dbg = 0;
+  static u8		u8RxLogBuf[2048];
+  static u8 	u8TxLogBuf[2048];
+ #endif /* CONFIG_ARC_PPP_ULOG_DEBUG */
+
+ static struct sock*	ppp_ulog_nl = 0;
+ static char			ppp_ifname[16] = "ppp200";
+ static int				ppp_ulog_grp = 1;
+
+
+/*******************************************************************************
+ * Description
+ *		display PPP capturing driver data via /proc/ppp_capture virtual file.
+ *
+ ******************************************************************************/
+static int dev_ppp_proc_read(	char*	page,	/* buffer where we should write*/
+								char**	start,	/* seem to be never used in the kernel */
+								off_t	off,	/* where we should start to write */
+								int		count,	/* how many character we could write */
+								int*	eof,	/* used to signal the end of file */
+								void*	data )	/* only used if we have defined our own buffer */
+{
+	int		len, cnt;
+
+    page += off ;
+    page [ 0 ] = 0 ;
+
+	len = 0;
+    cnt = sprintf( page+len, "administrative status : %s\n", (ppp_ulog_nl==0 ? "disable" : "enable") ) ;
+	len += cnt;
+    cnt = sprintf( page+len, "ppp interface name    : %s\n", ppp_ifname ) ;
+	len += cnt;
+    cnt = sprintf( page+len, "netlink group ID      : %d\n", ppp_ulog_grp ) ;
+	len += cnt;
+    cnt = sprintf( page+len, "netlink sock          : %p\n", ppp_ulog_nl ) ;
+	len += cnt;
+  #ifdef CONFIG_ARC_PPP_ULOG_DEBUG
+    cnt = sprintf( page+len, "debug                 : %s\n", (ppp_ulog_dbg==0 ? "off" : "on") ) ;
+	len += cnt;
+  #endif /* CONFIG_ARC_PPP_ULOG_DEBUG */
+
+    *eof = 1;
+    
+    return len; /* return number of bytes returned */
+}
+
+static void dev_ppp_proc_write_help( void )
+{
+	printk(	"\n"
+			"PPP capturing configuation commands:\n"
+			"        help              - show this help message\n"
+			"        enable [sock_hex] - to start PPP capturing with netlink sock in /proc/net/netlink (Eth=%d)\n"
+			"        disable           - to stop PPP capturing\n"
+			"        unit  <unit_ID>   - to set ppp interface number\n"
+			"        group <group_ID>  - to set netlink group number, 1 ~ %d\n"
+		  #ifdef CONFIG_ARC_PPP_ULOG_DEBUG
+			"        debugOn           - to enable loopback test debug message\n"
+			"        debugOff          - to disable loopback test debug message\n"
+		  #endif /* CONFIG_ARC_PPP_ULOG_DEBUG */
+			"\n"
+			, NETLINK_NFLOG, EBT_ULOG_MAXNLGROUPS
+		  );
+}
+
+/*******************************************************************************
+ * Description
+ *		set PPP capturing driver data via /proc/ppp_capture virtual file.
+ *
+ ******************************************************************************/
+static int dev_ppp_proc_write(	struct file*	file,	/* this parameter is usually ignored */
+								const char*		buffer,	/* it contains data that is passed to the
+															module (at maximum of possible).
+															buffer is not in kernel memory(ro) */
+								unsigned long	count,	/* says how many bytes should be read */
+								void*			data )	/* this parameter could be set to use our own
+															buffer (i.e.: using a method for many files */
+{
+	char*	pPtr;
+
+	/* trim the tailing space, tab and LF/CR*/
+	if ( count > 0 )
+	{
+		pPtr = (char*)buffer + count - 1;
+		for (; *pPtr==' ' || *pPtr=='\t' || *pPtr=='\n' || *pPtr=='\r'; pPtr++)
+		{
+			*pPtr = '\0';
+		}
+	}
+
+	/* enable */
+	if ( strnicmp( buffer, "enable", sizeof("enable")-1 ) == 0 )
+	{
+		unsigned long nl_sock;
+		pPtr = (char*)buffer + sizeof("enable");
+		for (; *pPtr==' ' || *pPtr=='\t' || *pPtr=='0' || *pPtr=='x' || *pPtr=='X'; pPtr++)
+		{
+		}
+		/* <sock_hex> */
+		for (nl_sock=0; isxdigit(*pPtr); pPtr++)
+		{
+			if (*pPtr >= 'a' && *pPtr <= 'f')
+				nl_sock = (nl_sock << 4) + (*pPtr - 'a') + 10;
+			else if (*pPtr >= 'A' && *pPtr <= 'F')
+				nl_sock = (nl_sock << 4) + (*pPtr - 'A') + 10;
+			else
+				nl_sock = (nl_sock << 4) + (*pPtr - '0');
+		}
+		if (nl_sock != 0)
+			ppp_ulog_nl = (struct sock*)nl_sock;
+		if (ppp_ulog_nl == 0)
+		{
+			printk( "<sock_hex> should not be zero\n" );
+			return count;
+		}
+	  #ifdef CONFIG_ARC_PPP_ULOG_DEBUG
+		if (ppp_ulog_dbg)
+			printk( "========================== ppp_ulog_nl = 0x%08x, sock = 0x%08x ========================\n", ppp_ulog_nl, ppp_ulog_nl->sk_socket );
+	  #endif /*CONFIG_ARC_PPP_ULOG_DEBUG*/
+		printk( "PPP capturing is enabled\n" );
+		return count;
+	}
+
+	/* disable */
+	if ( strnicmp( buffer, "disable", sizeof("disable")-1 ) == 0 )
+	{
+		if (ppp_ulog_nl == 0)
+		{
+			printk( "PPP capturing is not enabled yet\n" );
+			return count;
+		}
+		ppp_ulog_nl = 0;
+		printk( "PPP capturing is disabled\n" );
+		return count;
+	}
+
+	/* unit <unit_ID> */
+	if ( strnicmp( buffer, "unit", sizeof("unit")-1 ) == 0 )
+	{
+		unsigned int iUnit = 0;
+		pPtr = (char*)buffer + sizeof("unit");
+		for (; *pPtr==' ' || *pPtr=='\t'; pPtr++)
+		{
+		}
+		/* <unit_ID> */
+		for (iUnit=0; isdigit(*pPtr); pPtr++)
+		{
+			iUnit = iUnit * 10 + (*pPtr - '0');
+		}
+		/**/
+		sprintf( ppp_ifname, "ppp%d", iUnit );
+		/**/
+		printk( "set ppp capturing interface to %s\n", ppp_ifname );
+
+		return count;
+	}
+
+	/* group <group_ID> */
+	if ( strnicmp( buffer, "group", sizeof("group")-1 ) == 0 )
+	{
+		unsigned int iGrp = 0;
+		pPtr = (char*)buffer + sizeof("group");
+		for (; *pPtr==' ' || *pPtr=='\t'; pPtr++)
+		{
+		}
+		/* <group_ID> */
+		for (iGrp=0; isdigit(*pPtr); pPtr++)
+		{
+			iGrp = iGrp * 10 + (*pPtr - '0');
+		}
+		if ( iGrp <= 0 || iGrp > EBT_ULOG_MAXNLGROUPS )
+		{
+			printk( "<group_ID> should between 1 and %d\n", EBT_ULOG_MAXNLGROUPS );
+			return count;
+		}
+		/**/
+		ppp_ulog_grp = iGrp;
+		/**/
+		printk( "set ppp capturing netlink group to %d\n", ppp_ulog_grp );
+
+		return count;
+	}
+
+	/* debugOn */
+  #ifdef CONFIG_ARC_PPP_ULOG_DEBUG
+	if ( strnicmp( buffer, "debugOn", sizeof("debugOn")-1 ) == 0 )
+	{
+		ppp_ulog_dbg = 1;
+		printk( "ppp capturing debug is enabled\n" );
+		return count;
+	}
+  #endif /*CONFIG_ARC_PPP_ULOG_DEBUG*/
+
+	/* debugOff */
+  #ifdef CONFIG_ARC_PPP_ULOG_DEBUG
+	if ( strnicmp( buffer, "debugOff", sizeof("debugOff")-1 ) == 0 )
+	{
+		ppp_ulog_dbg = 0;
+		printk( "ppp capturing debug is disabled\n" );
+		return count;
+	}
+  #endif /*CONFIG_ARC_PPP_ULOG_DEBUG*/
+
+	dev_ppp_proc_write_help();
+
+	return count; /* return how many chars we have consumed, or we will receive them again... */
+}
+
+/*******************************************************************************
+ * Description
+ *		initialize PPP capturing /proc/ppp_capture virtual file.
+ *
+ ******************************************************************************/
+static int dev_ppp_proc_init(void)
+{
+	struct proc_dir_entry*	proc_file_conf;
+
+	/* make conf file */
+	proc_file_conf = create_proc_entry("ppp_capture", 0666, NULL);
+	if (proc_file_conf == NULL)
+	{
+		printk( "error creating entry in dev_ppp_proc_init\n" );
+		return -1;
+	}
+
+	/* set callback functions on file */
+	proc_file_conf->write_proc = dev_ppp_proc_write;
+	proc_file_conf->read_proc  = dev_ppp_proc_read;
+
+	return 0;
+}
+
+static struct sk_buff* dev_gen_ulog_skb( struct sk_buff* skb )
+{
+	ebt_ulog_packet_msg_t*	pm;
+	size_t					size, copy_len;
+	struct nlmsghdr*		nlh;
+	struct sk_buff*			n;
+
+	copy_len = skb->len + ETH_HLEN;
+
+	size = NLMSG_SPACE(sizeof(*pm) + copy_len);
+
+	n = alloc_skb( max(size, (size_t)NLMSG_GOODSIZE), GFP_ATOMIC );
+	if (!n) {
+		printk(KERN_ERR "dev_gen_ulog_skb: can't alloc whole buffer "
+		       "of size %d!\n", size);
+		return 0;
+	}
+
+	nlh = NLMSG_PUT( n, 0, 0, 0, size - NLMSG_ALIGN(sizeof(*nlh)) );
+
+	pm = NLMSG_DATA(nlh);
+
+	pm->version = EBT_ULOG_VERSION;
+	do_gettimeofday(&pm->stamp);
+	__net_timestamp(n);
+	pm->data_len = copy_len;
+	pm->mark = skb->mark;
+	pm->hook = 0;
+	*(pm->prefix) = '\0';
+
+	strcpy(pm->physindev, "ppp0" );
+	strcpy(pm->indev, "ppp0" );
+
+	pm->outdev[0] = pm->physoutdev[0] = '\0';
+
+	if (skb_copy_bits(skb, 0, pm->data+ETH_HLEN, skb->len) < 0)
+		BUG();
+	memset( pm->data, 0, 14 );
+	pm->data[12] = 0x08;
+
+	nlh->nlmsg_type = NLMSG_DONE;
+
+	return n;
+
+nlmsg_failure:
+	printk(KERN_CRIT "dev_gen_ulog_skb: error during NLMSG_PUT. This should "
+	       "not happen, please report to author.\n");
+
+	kfree_skb( n );
+
+	return 0;
+}
+
+void dev_ppp_proc_set_nl_sock( struct sock* new_nl_sock )
+{
+	ppp_ulog_nl = new_nl_sock;
+}
+
+static void* _pDummy = (void*)dev_ppp_proc_set_nl_sock;
+				/* ctc, don't remove this line. It is to prevent compiler removing
+				  dev_ppp_proc_set_nl_sock() symbol from kernel image */
+
+EXPORT_SYMBOL( dev_ppp_proc_set_nl_sock );
+
+
+#endif /* CONFIG_ARC_PPP_ULOG */
+
 
 /*
  * The @dev_base_head list is protected by @dev_base_lock and the rtnl
@@ -1704,7 +2021,11 @@ int dev_hard_start_xmit(struct sk_buff *skb, struct net_device *dev,
 	int rc;
 
 	if (likely(!skb->next)) {
-		if (!list_empty(&ptype_all))
+		if (!list_empty(&ptype_all)
+#if defined(CONFIG_IMQ) || defined(CONFIG_IMQ_MODULE)
+		    && !(skb->imq_flags & IMQ_F_ENQUEUE)
+#endif
+		    )
 			dev_queue_xmit_nit(skb, dev);
 
 		if (netif_needs_gso(dev, skb)) {
@@ -1713,6 +2034,32 @@ int dev_hard_start_xmit(struct sk_buff *skb, struct net_device *dev,
 			if (skb->next)
 				goto gso;
 		}
+
+	  #ifdef CONFIG_ARC_PPP_ULOG /*ctc*/
+		if (ppp_ulog_nl && strcmp(dev->name,ppp_ifname) == 0)
+		{
+			unsigned int uTxLogLen = skb->len;
+		  #ifdef CONFIG_ARC_PPP_ULOG_DEBUG
+			printk( "dev_hard_start_xmit(): dev %s len %d\n", dev->name, uTxLogLen);
+			if (ppp_ulog_dbg && uTxLogLen > 0 && skb->len <= sizeof(u8TxLogBuf))
+			{
+				unsigned int iCnt;
+				memset(u8TxLogBuf, 0, sizeof(u8TxLogBuf));
+				skb_copy_and_csum_dev(skb, u8TxLogBuf);
+				for (iCnt=0; iCnt<uTxLogLen; iCnt++) {
+					printk( " %02x", u8TxLogBuf[iCnt] );
+				}
+				printk( "\n" );
+			}
+		  #endif /*CONFIG_ARC_PPP_ULOG_DEBUG*/
+			if (uTxLogLen > 0)
+			{
+				struct sk_buff* nskb = dev_gen_ulog_skb( skb );
+				NETLINK_CB(nskb).dst_group = 1;
+				netlink_broadcast(ppp_ulog_nl, nskb, 0, (u32)ppp_ulog_grp, GFP_ATOMIC);
+			}
+		}
+	  #endif /*CONFIG_ARC_PPP_ULOG*/
 
 		/*
 		 * If device doesnt need skb->dst, release it right now while
@@ -1797,8 +2144,7 @@ u16 skb_tx_hash(const struct net_device *dev, const struct sk_buff *skb)
 }
 EXPORT_SYMBOL(skb_tx_hash);
 
-static struct netdev_queue *dev_pick_tx(struct net_device *dev,
-					struct sk_buff *skb)
+struct netdev_queue *dev_pick_tx(struct net_device *dev, struct sk_buff *skb)
 {
 	const struct net_device_ops *ops = dev->netdev_ops;
 	u16 queue_index = 0;
@@ -1811,6 +2157,7 @@ static struct netdev_queue *dev_pick_tx(struct net_device *dev,
 	skb_set_queue_mapping(skb, queue_index);
 	return netdev_get_tx_queue(dev, queue_index);
 }
+EXPORT_SYMBOL(dev_pick_tx);
 
 static inline int __dev_xmit_skb(struct sk_buff *skb, struct Qdisc *q,
 				 struct net_device *dev,
@@ -2001,10 +2348,41 @@ DEFINE_PER_CPU(struct netif_rx_stats, netdev_rx_stat) = { 0, };
  *
  */
 
+#ifdef CONFIG_LTQ_BR_OPT
+int __bridge netif_rx(struct sk_buff *skb)
+#else
 int netif_rx(struct sk_buff *skb)
+#endif
 {
 	struct softnet_data *queue;
 	unsigned long flags;
+
+
+  #ifdef CONFIG_ARC_PPP_ULOG /*ctc*/
+	if (ppp_ulog_nl && skb->dev && strcmp(skb->dev->name,ppp_ifname) == 0)
+	{
+		unsigned int uRxLogLen = skb->len;
+	  #ifdef CONFIG_ARC_PPP_ULOG_DEBUG
+		printk( "netif_rx(): dev %s len %d\n", skb->dev->name, uRxLogLen);
+		if (ppp_ulog_dbg && uRxLogLen > 0 && skb->len <= sizeof(u8RxLogBuf))
+		{
+			unsigned int iCnt;
+			memset(u8RxLogBuf, 0, sizeof(u8RxLogBuf));
+			skb_copy_and_csum_dev(skb, u8RxLogBuf);
+			for (iCnt=0; iCnt<uRxLogLen; iCnt++) {
+				printk( " %02x", u8RxLogBuf[iCnt] );
+			}
+			printk( "\n" );
+		}
+	  #endif /*CONFIG_ARC_PPP_ULOG_DEBUG*/
+		if (uRxLogLen > 0)
+		{
+			struct sk_buff* nskb = dev_gen_ulog_skb( skb );
+			NETLINK_CB(nskb).dst_group = 1;
+			netlink_broadcast(ppp_ulog_nl, nskb, 0, ppp_ulog_grp, GFP_ATOMIC);
+		}
+	}
+  #endif /*CONFIG_ARC_PPP_ULOG*/
 
 	/* if netpoll wants it, pretend we never saw it */
 	if (netpoll_rx(skb))
@@ -2289,7 +2667,12 @@ void netif_nit_deliver(struct sk_buff *skb)
  *	NET_RX_SUCCESS: no congestion
  *	NET_RX_DROP: packet was dropped
  */
+
+#ifdef CONFIG_LTQ_BR_OPT
+int __bridge netif_receive_skb(struct sk_buff *skb)
+#else
 int netif_receive_skb(struct sk_buff *skb)
+#endif
 {
 	struct packet_type *ptype, *pt_prev;
 	struct net_device *orig_dev;
@@ -2707,7 +3090,11 @@ int napi_gro_frags(struct napi_struct *napi)
 }
 EXPORT_SYMBOL(napi_gro_frags);
 
+#ifdef CONFIG_LTQ_BR_OPT
+static int __bridge process_backlog(struct napi_struct *napi, int quota)
+#else
 static int process_backlog(struct napi_struct *napi, int quota)
+#endif
 {
 	int work = 0;
 	struct softnet_data *queue = &__get_cpu_var(softnet_data);
@@ -4417,6 +4804,11 @@ static int dev_ifsioc(struct net *net, struct ifreq *ifr, unsigned int cmd)
 		    cmd == SIOCSMIIREG ||
 		    cmd == SIOCBRADDIF ||
 		    cmd == SIOCBRDELIF ||
+#ifdef CONFIG_IFX_IGMP_SNOOPING
+			cmd == SIOCBRADDMGREC ||
+			cmd == SIOCBRDELMGREC ||
+			cmd == SIOCBRSETROUTERPORT ||
+#endif
 		    cmd == SIOCSHWTSTAMP ||
 		    cmd == SIOCWANDEV) {
 			err = -EOPNOTSUPP;
@@ -4572,6 +4964,11 @@ int dev_ioctl(struct net *net, unsigned int cmd, void __user *arg)
 	case SIOCBONDCHANGEACTIVE:
 	case SIOCBRADDIF:
 	case SIOCBRDELIF:
+#ifdef CONFIG_IFX_IGMP_SNOOPING
+	case SIOCBRADDMGREC:
+	case SIOCBRDELMGREC:
+	case SIOCBRSETROUTERPORT:
+#endif
 	case SIOCSHWTSTAMP:
 		if (!capable(CAP_NET_ADMIN))
 			return -EPERM;
@@ -5693,7 +6090,11 @@ static int __init net_dev_init(void)
 
 	hotcpu_notifier(dev_cpu_callback, 0);
 	dst_init();
-	dev_mcast_init();
+
+  #ifdef CONFIG_ARC_PPP_ULOG /*ctc*/
+	dev_ppp_proc_init();
+  #endif /* CONFIG_ARC_PPP_ULOG */
+
 	rc = 0;
 out:
 	return rc;

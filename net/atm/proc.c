@@ -152,19 +152,29 @@ static void *vcc_seq_next(struct seq_file *seq, void *v, loff_t *pos)
 static void pvc_info(struct seq_file *seq, struct atm_vcc *vcc)
 {
 	static const char *const class_name[] =
-		{"off","UBR","CBR","VBR","ABR"};
+		{"off","UBR","CBR","NRT-VBR","ABR","ANY","RT-VBR","UBR+","GFR"};
 	static const char *const aal_name[] = {
 		"---",	"1",	"2",	"3/4",	/*  0- 3 */
 		"???",	"5",	"???",	"???",	/*  4- 7 */
 		"???",	"???",	"???",	"???",	/*  8-11 */
 		"???",	"0",	"???",	"???"};	/* 12-15 */
 
+  #if 1 /*ctc*/
+	seq_printf(seq, "%3d %3d %5d %-3s %-6s %7d %7d %7d %7d %7d %-6s %7d %7d %7d %7d %7d"
+		, vcc->dev->number, vcc->vpi, vcc->vci
+		, vcc->qos.aal >= sizeof(aal_name)/sizeof(aal_name[0]) ? "err" : aal_name[vcc->qos.aal]
+		, class_name[vcc->qos.rxtp.traffic_class], vcc->qos.rxtp.pcr, vcc->qos.rxtp.max_pcr, vcc->qos.rxtp.min_pcr
+		, vcc->qos.rxtp.scr, vcc->qos.rxtp.mbs
+		, class_name[vcc->qos.txtp.traffic_class], vcc->qos.txtp.pcr, vcc->qos.txtp.max_pcr, vcc->qos.txtp.min_pcr
+		, vcc->qos.txtp.scr, vcc->qos.txtp.mbs );
+  #else
 	seq_printf(seq, "%3d %3d %5d %-3s %7d %-5s %7d %-6s",
 	    vcc->dev->number,vcc->vpi,vcc->vci,
 	    vcc->qos.aal >= ARRAY_SIZE(aal_name) ? "err" :
 	    aal_name[vcc->qos.aal],vcc->qos.rxtp.min_pcr,
 	    class_name[vcc->qos.rxtp.traffic_class],vcc->qos.txtp.min_pcr,
 	    class_name[vcc->qos.txtp.traffic_class]);
+  #endif
 	if (test_bit(ATM_VF_IS_CLIP, &vcc->flags)) {
 		struct clip_vcc *clip_vcc = CLIP_VCC(vcc);
 		struct net_device *dev;
@@ -267,8 +277,12 @@ static const struct file_operations devices_seq_fops = {
 
 static int pvc_seq_show(struct seq_file *seq, void *v)
 {
-	static char atm_pvc_banner[] =
+	static char atm_pvc_banner[] = 
+  #if 1 /*ctc*/
+		"Itf VPI VCI   AAL RX(Class,PCR,MAX_PCR,MIN_PCR,SCR,MBS) TX(PCR,Class,PCR,MAX_PCR,MIN_PCR,SCR,MBS)\n";
+  #else
 		"Itf VPI VCI   AAL RX(PCR,Class) TX(PCR,Class)\n";
+  #endif
 
 	if (v == SEQ_START_TOKEN)
 		seq_puts(seq, atm_pvc_banner);

@@ -23,11 +23,57 @@
 #ifndef __LINUX_XHCI_HCD_H
 #define __LINUX_XHCI_HCD_H
 
+#include <linux/version.h>
 #include <linux/usb.h>
 #include <linux/timer.h>
 #include <linux/kernel.h>
 
 #include "../core/hcd.h"
+
+#if defined(CONFIG_CPU_BIG_ENDIAN) && (CONFIG_CPU_BIG_ENDIAN == 1) /* ctc */
+
+ #define	SWAP16( val )	( val )
+ #define	SWAP32( val )	( val )
+ #define	SWAP64( val )	( val )
+
+#else
+
+static inline __u16 SWAP16(__u16 val)
+{
+	__u16 ret;
+	ret =
+		((val&0xFF00)>>8 ) |
+		((val&0x00FF)<<8 ) ;
+	return ret;
+}
+static inline __u32 SWAP32(__u32 val)
+{
+	__u32 ret;
+	ret =
+		((val&0xFF000000)>>24) |
+		((val&0x00FF0000)>>8 ) |
+		((val&0x0000FF00)<<8 ) |
+		((val&0x000000FF)<<24) ;
+	return ret;
+}
+
+static inline __u64 SWAP64(__u64 val)
+{
+	__u64 valt,ret;
+	__u32 *reth,*retl,*valh,*vall;
+	valt=val;
+	vall=((__u32 *)(&valt))+0;
+	valh=((__u32 *)(&valt))+1;
+	retl=((__u32 *)(&ret))+1;
+	reth=((__u32 *)(&ret))+0;
+
+	(*retl) = SWAP32(*vall);
+	(*reth) = SWAP32(*valh);
+	return ret;
+}
+
+#endif
+
 /* Code sharing between pci-quirks and xhci hcd */
 #include	"xhci-ext-caps.h"
 
@@ -458,8 +504,8 @@ struct xhci_doorbell_array {
  */
 struct xhci_container_ctx {
 	unsigned type;
-#define XHCI_CTX_TYPE_DEVICE  0x1
-#define XHCI_CTX_TYPE_INPUT   0x2
+		#define XHCI_CTX_TYPE_DEVICE  0x1
+		#define XHCI_CTX_TYPE_INPUT   0x2
 
 	int size;
 
@@ -608,10 +654,6 @@ struct xhci_ep_ctx {
 #define MAX_PACKET(p)	(((p)&0xffff) << 16)
 #define MAX_PACKET_MASK		(0xffff << 16)
 #define MAX_PACKET_DECODED(p)	(((p) >> 16) & 0xffff)
-
-/* tx_info bitmasks */
-#define AVG_TRB_LENGTH_FOR_EP(p)	((p) & 0xffff)
-#define MAX_ESIT_PAYLOAD_FOR_EP(p)	(((p) & 0xffff) << 16)
 
 
 /**
@@ -1082,7 +1124,7 @@ struct xhci_hcd {
 	struct dma_pool	*device_pool;
 	struct dma_pool	*segment_pool;
 
-#ifdef CONFIG_USB_XHCI_HCD_DEBUGGING
+#ifdef CONFIG_USB_HOST_IFX_XHCI_DEBUGGING
 	/* Poll the rings - for debugging */
 	struct timer_list	event_ring_timer;
 	int			zombie;
@@ -1110,7 +1152,7 @@ static inline struct usb_hcd *xhci_to_hcd(struct xhci_hcd *xhci)
 	return container_of((void *) xhci, struct usb_hcd, hcd_priv);
 }
 
-#ifdef CONFIG_USB_XHCI_HCD_DEBUGGING
+#ifdef CONFIG_USB_HOST_IFX_XHCI_DEBUGGING
 #define XHCI_DEBUG	1
 #else
 #define XHCI_DEBUG	0
@@ -1118,6 +1160,7 @@ static inline struct usb_hcd *xhci_to_hcd(struct xhci_hcd *xhci)
 
 #define xhci_dbg(xhci, fmt, args...) \
 	do { if (XHCI_DEBUG) dev_dbg(xhci_to_hcd(xhci)->self.controller , fmt , ## args); } while (0)
+
 #define xhci_info(xhci, fmt, args...) \
 	do { if (XHCI_DEBUG) dev_info(xhci_to_hcd(xhci)->self.controller , fmt , ## args); } while (0)
 #define xhci_err(xhci, fmt, args...) \
@@ -1130,15 +1173,12 @@ static inline struct usb_hcd *xhci_to_hcd(struct xhci_hcd *xhci)
 static inline unsigned int xhci_readl(const struct xhci_hcd *xhci,
 		__u32 __iomem *regs)
 {
-	return readl(regs);
+	return SWAP32(readl(regs));
 }
 static inline void xhci_writel(struct xhci_hcd *xhci,
 		const unsigned int val, __u32 __iomem *regs)
 {
-	xhci_dbg(xhci,
-			"`MEM_WRITE_DWORD(3'b000, 32'h%p, 32'h%0x, 4'hf);\n",
-			regs, val);
-	writel(val, regs);
+	writel(SWAP32(val), regs);
 }
 
 /*
@@ -1154,8 +1194,8 @@ static inline u64 xhci_read_64(const struct xhci_hcd *xhci,
 		__u64 __iomem *regs)
 {
 	__u32 __iomem *ptr = (__u32 __iomem *) regs;
-	u64 val_lo = readl(ptr);
-	u64 val_hi = readl(ptr + 1);
+	u64 val_lo = xhci_readl(xhci,(ptr+0));
+	u64 val_hi = xhci_readl(xhci,(ptr+1));
 	return val_lo + (val_hi << 32);
 }
 static inline void xhci_write_64(struct xhci_hcd *xhci,
@@ -1165,11 +1205,8 @@ static inline void xhci_write_64(struct xhci_hcd *xhci,
 	u32 val_lo = lower_32_bits(val);
 	u32 val_hi = upper_32_bits(val);
 
-	xhci_dbg(xhci,
-			"`MEM_WRITE_DWORD(3'b000, 64'h%p, 64'h%0lx, 4'hf);\n",
-			regs, (long unsigned int) val);
-	writel(val_lo, ptr);
-	writel(val_hi, ptr + 1);
+	xhci_writel(xhci,val_lo, (ptr+0));
+	xhci_writel(xhci,val_hi, (ptr+1));
 }
 
 static inline int xhci_link_trb_quirk(struct xhci_hcd *xhci)
@@ -1240,8 +1277,13 @@ void xhci_free_dev(struct usb_hcd *hcd, struct usb_device *udev);
 int xhci_address_device(struct usb_hcd *hcd, struct usb_device *udev);
 int xhci_update_hub_device(struct usb_hcd *hcd, struct usb_device *hdev,
 			struct usb_tt *tt, gfp_t mem_flags);
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,32)
+int xhci_urb_enqueue(struct usb_hcd *hcd, struct usb_host_endpoint *ep, struct urb *urb, gfp_t mem_flags);
+int xhci_urb_dequeue(struct usb_hcd *hcd, struct urb *urb);
+#else
 int xhci_urb_enqueue(struct usb_hcd *hcd, struct urb *urb, gfp_t mem_flags);
 int xhci_urb_dequeue(struct usb_hcd *hcd, struct urb *urb, int status);
+#endif
 int xhci_add_endpoint(struct usb_hcd *hcd, struct usb_device *udev, struct usb_host_endpoint *ep);
 int xhci_drop_endpoint(struct usb_hcd *hcd, struct usb_device *udev, struct usb_host_endpoint *ep);
 void xhci_endpoint_reset(struct usb_hcd *hcd, struct usb_host_endpoint *ep);

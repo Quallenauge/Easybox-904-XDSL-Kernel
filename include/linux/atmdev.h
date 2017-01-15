@@ -98,14 +98,28 @@ struct atm_dev_stats {
 					/* set backend handler */
 #define ATM_NEWBACKENDIF _IOW('a',ATMIOC_SPECIAL+3,atm_backend_t)
 					/* use backend to make new if */
-#define ATM_ADDPARTY  	_IOW('a', ATMIOC_SPECIAL+4,struct atm_iobuf)
+#define ATM_DELBACKENDIF _IOW('a',ATMIOC_SPECIAL+4,atm_backend_t)
+					/* set backend to remove if */
+#define ATM_ADDPARTY  	_IOW('a', ATMIOC_SPECIAL+5,struct atm_iobuf)
  					/* add party to p2mp call */
 #ifdef CONFIG_COMPAT
 /* It actually takes struct sockaddr_atmsvc, not struct atm_iobuf */
-#define COMPAT_ATM_ADDPARTY  	_IOW('a', ATMIOC_SPECIAL+4,struct compat_atm_iobuf)
+#define COMPAT_ATM_ADDPARTY  	_IOW('a', ATMIOC_SPECIAL+5,struct compat_atm_iobuf)
 #endif
-#define ATM_DROPPARTY 	_IOW('a', ATMIOC_SPECIAL+5,int)
+#define ATM_DROPPARTY 	_IOW('a', ATMIOC_SPECIAL+6,int)
 					/* drop party from p2mp call */
+
+#ifdef CONFIG_WAN_VLAN_SUPPORT
+struct wan_vlan_struct {
+	int vlan_if_num;
+	char vlan_if_name[16]; /* VLAN Enabled WAN-IF name */
+	int8_t tag_vlan_enable;
+	int8_t untag_vlan;
+	uint16_t vlan_vci;
+};
+#define ATM_BR2684_VLAN_CONFIG _IOW('a', ATMIOC_SPECIAL+5,int)
+#define ATM_BR2684_VLAN_VCC_CONFIG _IOW('a', ATMIOC_SPECIAL+6,struct wan_vlan_struct)
+#endif
 
 /*
  * These are backend handkers that can be set via the ATM_SETBACKEND call

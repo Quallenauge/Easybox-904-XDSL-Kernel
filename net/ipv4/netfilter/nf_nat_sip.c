@@ -23,6 +23,8 @@
 #include <net/netfilter/nf_conntrack_expect.h>
 #include <linux/netfilter/nf_conntrack_sip.h>
 
+//#define CONFIG_NF_NAT_SIP_WANIP   //since it's now configured by kernel_menuconfig
+
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Christian Hentschel <chentschel@arnet.com.ar>");
 MODULE_DESCRIPTION("SIP NAT helper");
@@ -36,7 +38,9 @@ static unsigned int mangle_packet(struct sk_buff *skb,
 {
 	enum ip_conntrack_info ctinfo;
 	struct nf_conn *ct = nf_ct_get(skb, &ctinfo);
-
+	#if defined(CONFIG_NF_NAT_SIP_WANIP)
+	return 1;
+	#endif
 	if (!nf_nat_mangle_udp_packet(skb, ct, ctinfo, matchoff, matchlen,
 				      buffer, buflen))
 		return 0;
@@ -59,6 +63,7 @@ static int map_addr(struct sk_buff *skb,
 	unsigned int buflen;
 	__be32 newaddr;
 	__be16 newport;
+
 
 	if (ct->tuplehash[dir].tuple.src.u3.ip == addr->ip &&
 	    ct->tuplehash[dir].tuple.src.u.udp.port == port) {
@@ -109,12 +114,14 @@ static unsigned int ip_nat_sip(struct sk_buff *skb,
 
 	/* Basic rules: requests and responses. */
 	if (strnicmp(*dptr, "SIP/2.0", strlen("SIP/2.0")) != 0) {
+
 		if (ct_sip_parse_request(ct, *dptr, *datalen,
 					 &matchoff, &matchlen,
 					 &addr, &port) > 0 &&
 		    !map_addr(skb, dptr, datalen, matchoff, matchlen,
 			      &addr, port))
 			return NF_DROP;
+
 		request = 1;
 	} else
 		request = 0;
@@ -246,6 +253,7 @@ static unsigned int ip_nat_sip_expect(struct sk_buff *skb,
 	char buffer[sizeof("nnn.nnn.nnn.nnn:nnnnn")];
 	unsigned buflen;
 
+
 	/* Connection will come from reply */
 	if (ct->tuplehash[dir].tuple.src.u3.ip == ct->tuplehash[!dir].tuple.dst.u3.ip)
 		newip = exp->tuple.dst.u3.ip;
@@ -283,6 +291,7 @@ static unsigned int ip_nat_sip_expect(struct sk_buff *skb,
 				   buffer, buflen))
 			goto err;
 	}
+
 	return NF_ACCEPT;
 
 err:

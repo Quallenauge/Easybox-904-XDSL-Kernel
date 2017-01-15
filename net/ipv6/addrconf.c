@@ -1751,7 +1751,7 @@ static struct inet6_dev *addrconf_add_dev(struct net_device *dev)
 	return idev;
 }
 
-void addrconf_prefix_rcv(struct net_device *dev, u8 *opt, int len)
+int addrconf_prefix_rcv(struct net_device *dev, u8 *opt, int len)
 {
 	struct prefix_info *pinfo;
 	__u32 valid_lft;
@@ -1764,7 +1764,12 @@ void addrconf_prefix_rcv(struct net_device *dev, u8 *opt, int len)
 
 	if (len < sizeof(struct prefix_info)) {
 		ADBG(("addrconf: prefix option too short\n"));
-		return;
+		return -EINVAL;
+	}
+
+	/* fpan add for DT724 */
+	if (pinfo->autoconf == 0) {
+		return -EINVAL;
 	}
 
 	/*
@@ -1774,7 +1779,7 @@ void addrconf_prefix_rcv(struct net_device *dev, u8 *opt, int len)
 	addr_type = ipv6_addr_type(&pinfo->prefix);
 
 	if (addr_type & (IPV6_ADDR_MULTICAST|IPV6_ADDR_LINKLOCAL))
-		return;
+		return -EINVAL;
 
 	valid_lft = ntohl(pinfo->valid);
 	prefered_lft = ntohl(pinfo->prefered);
@@ -1782,7 +1787,7 @@ void addrconf_prefix_rcv(struct net_device *dev, u8 *opt, int len)
 	if (prefered_lft > valid_lft) {
 		if (net_ratelimit())
 			printk(KERN_WARNING "addrconf: prefix option has invalid lifetime\n");
-		return;
+		return -EINVAL;
 	}
 
 	in6_dev = in6_dev_get(dev);
@@ -1790,7 +1795,7 @@ void addrconf_prefix_rcv(struct net_device *dev, u8 *opt, int len)
 	if (in6_dev == NULL) {
 		if (net_ratelimit())
 			printk(KERN_DEBUG "addrconf: device %s not configured\n", dev->name);
-		return;
+		return -EINVAL;
 	}
 
 	/*
@@ -1859,7 +1864,7 @@ void addrconf_prefix_rcv(struct net_device *dev, u8 *opt, int len)
 			if (ipv6_generate_eui64(addr.s6_addr + 8, dev) &&
 			    ipv6_inherit_eui64(addr.s6_addr + 8, in6_dev)) {
 				in6_dev_put(in6_dev);
-				return;
+				return -EINVAL;
 			}
 			goto ok;
 		}
@@ -1867,7 +1872,7 @@ void addrconf_prefix_rcv(struct net_device *dev, u8 *opt, int len)
 			printk(KERN_DEBUG "IPv6 addrconf: prefix with wrong length %d\n",
 			       pinfo->prefix_len);
 		in6_dev_put(in6_dev);
-		return;
+		return -EINVAL;
 
 ok:
 
@@ -1894,7 +1899,7 @@ ok:
 
 			if (!ifp || IS_ERR(ifp)) {
 				in6_dev_put(in6_dev);
-				return;
+				return -EINVAL;
 			}
 
 			update_lft = create = 1;
@@ -2014,6 +2019,7 @@ ok:
 	}
 	inet6_prefix_notify(RTM_NEWPREFIX, in6_dev, pinfo);
 	in6_dev_put(in6_dev);
+	return 0;
 }
 
 /*
@@ -2749,7 +2755,11 @@ static void addrconf_rs_timer(unsigned long data)
 		addrconf_mod_timer(ifp, AC_RS,
 				   (ifp->probes == ifp->idev->cnf.rtr_solicits) ?
 				   ifp->idev->cnf.rtr_solicit_delay :
+#if 1 /*initial attempt followed alg_01 of TOCPE0051 for DT*/
+				   (1<<(ifp->probes-2))*HZ);
+#else
 				   ifp->idev->cnf.rtr_solicit_interval);
+#endif
 		spin_unlock(&ifp->lock);
 
 		ndisc_send_rs(ifp->idev->dev, &ifp->addr, &in6addr_linklocal_allrouters);
@@ -2888,7 +2898,8 @@ static void addrconf_dad_completed(struct inet6_ifaddr *ifp)
 	   start sending router solicitations.
 	 */
 
-	if (ifp->idev->cnf.forwarding == 0 &&
+	if ((ifp->idev->cnf.forwarding == 0 ||
+	     ifp->idev->cnf.forwarding == 2) &&
 	    ifp->idev->cnf.rtr_solicits > 0 &&
 	    (dev->flags&IFF_LOOPBACK) == 0 &&
 	    (ipv6_addr_type(&ifp->addr) & IPV6_ADDR_LINKLOCAL)) {
@@ -3060,6 +3071,75 @@ void if6_proc_exit(void)
 {
 	unregister_pernet_subsys(&if6_proc_net_ops);
 }
+
+/*
+ * 2010-11-12 hsubj add
+ * to pass RA flags (managed, other_config) to user space
+ */
+static int flags6_seq_show(struct seq_file *seq, void *v)
+{
+	struct inet6_ifaddr *ifp = (struct inet6_ifaddr *)v;
+	seq_printf(seq, "%pi6 %02x %02x %02x %02x %02x %08x %8s %pi6\n",
+		   &ifp->addr,
+		   ifp->idev->dev->ifindex,
+		   ifp->prefix_len,
+		   ifp->scope,
+		   ifp->flags,
+		   ifp->probes,
+		   ifp->idev->if_flags,
+		   ifp->idev->dev->name,
+		   &ifp->idev->radvd_addr);
+	return 0;
+}
+
+static const struct seq_operations flags6_seq_ops = {
+	.start	= if6_seq_start,
+	.next	= if6_seq_next,
+	.show	= flags6_seq_show,
+	.stop	= if6_seq_stop,
+};
+
+static int flags6_seq_open(struct inode *inode, struct file *file)
+{
+	return seq_open_net(inode, file, &flags6_seq_ops,
+			    sizeof(struct if6_iter_state));
+}
+
+static const struct file_operations flags6_fops = {
+	.owner		= THIS_MODULE,
+	.open		= flags6_seq_open,
+	.read		= seq_read,
+	.llseek		= seq_lseek,
+	.release	= seq_release_net,
+};
+
+static int flags6_proc_net_init(struct net *net)
+{
+	if (!proc_net_fops_create(net, "if_flags6", S_IRUGO, &flags6_fops))
+		return -ENOMEM;
+	return 0;
+}
+
+static void flags6_proc_net_exit(struct net *net)
+{
+       proc_net_remove(net, "if_flags6");
+}
+
+static struct pernet_operations flags6_proc_net_ops = {
+       .init = flags6_proc_net_init,
+       .exit = flags6_proc_net_exit,
+};
+
+int __init flags6_proc_init(void)
+{
+	return register_pernet_subsys(&flags6_proc_net_ops);
+}
+
+void flags6_proc_exit(void)
+{
+	unregister_pernet_subsys(&flags6_proc_net_ops);
+}
+
 #endif	/* CONFIG_PROC_FS */
 
 #if defined(CONFIG_IPV6_MIP6) || defined(CONFIG_IPV6_MIP6_MODULE)

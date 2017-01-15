@@ -86,7 +86,14 @@ obj-$(CONFIG_CRYPTO_TEST) += tcrypt.o
 obj-$(CONFIG_CRYPTO_GHASH) += ghash-generic.o
 
 #
+# OCF
+#
+obj-$(CONFIG_OCF_OCF) += ocf/
+
+#
 # generic algorithms and the async_tx api
 #
 obj-$(CONFIG_XOR_BLOCKS) += xor.o
 obj-$(CONFIG_ASYNC_CORE) += async_tx/
+
+-include $(srctree)/crypto/Makefile.ifx

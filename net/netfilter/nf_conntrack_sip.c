@@ -17,6 +17,7 @@
 #include <linux/in.h>
 #include <linux/udp.h>
 #include <linux/netfilter.h>
+#include <linux/inetdevice.h>
 
 #include <net/netfilter/nf_conntrack.h>
 #include <net/netfilter/nf_conntrack_core.h>
@@ -45,7 +46,8 @@ module_param(sip_direct_signalling, int, 0600);
 MODULE_PARM_DESC(sip_direct_signalling, "expect incoming calls from registrar "
 					"only (default 1)");
 
-static int sip_direct_media __read_mostly = 1;
+//static int sip_direct_media __read_mostly = 1;
+static int sip_direct_media __read_mostly = 0;	// to consider the case that SIP proxy and RTP relay use different IP addresses
 module_param(sip_direct_media, int, 0600);
 MODULE_PARM_DESC(sip_direct_media, "Expect Media streams between signalling "
 				   "endpoints only (default 1)");
@@ -376,7 +378,7 @@ int ct_sip_get_header(const struct nf_conn *ct, const char *dptr,
 			dptr += hdr->len;
 		else if (hdr->cname && limit - dptr >= hdr->clen + 1 &&
 			 strnicmp(dptr, hdr->cname, hdr->clen) == 0 &&
-			 !isalpha(*(dptr + hdr->clen + 1)))
+			 !isalpha(*(dptr + hdr->clen)))
 			dptr += hdr->clen;
 		else
 			continue;
@@ -727,6 +729,20 @@ static void flush_expectations(struct nf_conn *ct, bool media)
 	}
 	spin_unlock_bh(&nf_conntrack_lock);
 }
+/* Zhijian 2012-12-04 move patch here from nf_conntrack_expect.c */
+static void sip_nf_ct_expect_init(struct nf_conntrack_expect *exp, unsigned int class,
+		       u_int8_t family,
+		       const union nf_inet_addr *saddr,
+		       const union nf_inet_addr *daddr,
+		       u_int8_t proto, const __be16 *src, const __be16 *dst)
+{
+
+	nf_ct_expect_init(exp, class, family, saddr, daddr, proto, src, dst);
+
+	//ygchen, to allow incoming RTP from RTP relay server which may be different from the SIP proxy
+	memset(&exp->mask.src.u3, 0x00, sizeof(exp->mask.src.u3));
+}
+/* Zhijian 2012-12-04 */
 
 static int set_expected_rtp_rtcp(struct sk_buff *skb,
 				 const char **dptr, unsigned int *datalen,
@@ -816,13 +832,15 @@ static int set_expected_rtp_rtcp(struct sk_buff *skb,
 	rtp_exp = nf_ct_expect_alloc(ct);
 	if (rtp_exp == NULL)
 		goto err1;
-	nf_ct_expect_init(rtp_exp, class, nf_ct_l3num(ct), saddr, daddr,
+	/* Zhijian 2012-12-04 */
+	sip_nf_ct_expect_init(rtp_exp, class, nf_ct_l3num(ct), saddr, daddr,
 			  IPPROTO_UDP, NULL, &rtp_port);
 
 	rtcp_exp = nf_ct_expect_alloc(ct);
 	if (rtcp_exp == NULL)
 		goto err2;
-	nf_ct_expect_init(rtcp_exp, class, nf_ct_l3num(ct), saddr, daddr,
+	/* Zhijian 2012-12-04 */
+	sip_nf_ct_expect_init(rtcp_exp, class, nf_ct_l3num(ct), saddr, daddr,
 			  IPPROTO_UDP, NULL, &rtcp_port);
 
 	nf_nat_sdp_media = rcu_dereference(nf_nat_sdp_media_hook);
@@ -847,6 +865,7 @@ err1:
 static const struct sdp_media_type sdp_media_types[] = {
 	SDP_MEDIA_TYPE("audio ", SIP_EXPECT_AUDIO),
 	SDP_MEDIA_TYPE("video ", SIP_EXPECT_VIDEO),
+	SDP_MEDIA_TYPE("image ", SIP_EXPECT_IMAGE),
 };
 
 static const struct sdp_media_type *sdp_media_type(const char *dptr,
@@ -872,7 +891,7 @@ static int process_sdp(struct sk_buff *skb,
 {
 	enum ip_conntrack_info ctinfo;
 	struct nf_conn *ct = nf_ct_get(skb, &ctinfo);
-	struct nf_conn_help *help = nfct_help(ct);
+//	struct nf_conn_help *help = nfct_help(ct);
 	unsigned int matchoff, matchlen;
 	unsigned int mediaoff, medialen;
 	unsigned int sdpoff;
@@ -946,6 +965,22 @@ static int process_sdp(struct sk_buff *skb,
 					    mediaoff, medialen);
 		if (ret != NF_ACCEPT)
 			return ret;
+		// Patched by GZ team
+		/* Added by Kelly @ 2009/09/01 */
+		/* We need to consider caller and callee both in the LAN. */
+		/* SIP ALG do not change IP and media port in SDP. */
+		{
+			struct net_device *ret_dev_find=NULL;
+
+			ret_dev_find = ip_dev_find(nf_ct_net(ct), rtp_addr.ip);
+			if (ret_dev_find) {
+				ret = NF_ACCEPT;
+				dev_put(ret_dev_find);
+				return ret;
+			}	
+		}
+		/* end Added by Kelly @ 2009/09/01 */
+
 
 		/* Update media connection address if present */
 		if (maddr_len && nf_nat_sdp_addr && ct->status & IPS_NAT_MASK) {
@@ -962,8 +997,9 @@ static int process_sdp(struct sk_buff *skb,
 	if (nf_nat_sdp_session && ct->status & IPS_NAT_MASK)
 		ret = nf_nat_sdp_session(skb, dptr, sdpoff, datalen, &rtp_addr);
 
-	if (ret == NF_ACCEPT && i > 0)
-		help->help.ct_sip_info.invite_cseq = cseq;
+//	if (ret == NF_ACCEPT && i > 0){
+//		help->help.ct_sip_info.invite_cseq = cseq;
+//	}
 
 	return ret;
 }
@@ -1013,6 +1049,20 @@ static int process_prack_response(struct sk_buff *skb,
 	else if (help->help.ct_sip_info.invite_cseq == cseq)
 		flush_expectations(ct, true);
 	return NF_ACCEPT;
+}
+static int process_invite_request(struct sk_buff *skb,
+				  const char **dptr, unsigned int *datalen,
+				  unsigned int cseq, unsigned int code)
+{
+	enum ip_conntrack_info ctinfo;
+	struct nf_conn *ct = nf_ct_get(skb, &ctinfo);
+	struct nf_conn_help *help = nfct_help(ct);
+	unsigned int ret;
+	flush_expectations(ct, true);
+	ret = process_sdp(skb, dptr, datalen, cseq);
+	if (ret == NF_ACCEPT)
+		help->help.ct_sip_info.invite_cseq = cseq;
+	return ret;
 }
 
 static int process_bye_request(struct sk_buff *skb,
@@ -1184,7 +1234,7 @@ flush:
 }
 
 static const struct sip_handler sip_handlers[] = {
-	SIP_HANDLER("INVITE", process_sdp, process_invite_response),
+	SIP_HANDLER("INVITE", process_invite_request, process_invite_response),
 	SIP_HANDLER("UPDATE", process_sdp, process_update_response),
 	SIP_HANDLER("ACK", process_sdp, NULL),
 	SIP_HANDLER("PRACK", process_sdp, process_prack_response),
@@ -1314,6 +1364,10 @@ static const struct nf_conntrack_expect_policy sip_exp_policy[SIP_EXPECT_MAX + 1
 	},
 	[SIP_EXPECT_VIDEO] = {
 		.max_expected	= 2 * IP_CT_DIR_MAX,
+		.timeout	= 3 * 60,
+	},
+	[SIP_EXPECT_IMAGE] = {
+		.max_expected	= IP_CT_DIR_MAX,
 		.timeout	= 3 * 60,
 	},
 };

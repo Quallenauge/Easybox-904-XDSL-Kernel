@@ -44,3 +44,5 @@ obj-$(CONFIG_MTD_NAND_W90P910)		+= w90p910_nand.o
 obj-$(CONFIG_MTD_NAND_NOMADIK)		+= nomadik_nand.o
 
 nand-objs := nand_base.o nand_bbt.o
+
+-include $(srctree)/drivers/mtd/nand/Makefile.ifx

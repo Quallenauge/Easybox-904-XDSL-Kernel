@@ -31,7 +31,10 @@
 #include <linux/usb.h>
 #include <linux/usb/cdc.h>
 #include <linux/usb/usbnet.h>
-
+#if 1 /* ctc/daniel */
+ #include <linux/ctype.h>
+ #include <linux/version.h>
+#endif
 
 #if defined(CONFIG_USB_NET_RNDIS_HOST) || defined(CONFIG_USB_NET_RNDIS_HOST_MODULE)
 
@@ -388,6 +391,40 @@ static void cdc_status(struct usbnet *dev, struct urb *urb)
 	}
 }
 
+#if (LINUX_VERSION_CODE <= KERNEL_VERSION(2,6,31)) /* ctc/daniel */
+
+static u8 nibble(unsigned char c)
+{
+	if (likely(isdigit(c)))
+		return c - '0';
+	c = toupper(c);
+	if (likely(isxdigit(c)))
+		return 10 + c - 'A';
+	return 0;
+}
+
+static inline int
+get_ethernet_addr(struct usbnet *dev, struct usb_cdc_ether_desc *e)
+{
+	int 		tmp, i;
+	unsigned char	buf [13];
+
+	tmp = usb_string(dev->udev, e->iMACAddress, buf, sizeof buf);
+	if (tmp != 12) {
+		dev_dbg(&dev->udev->dev,
+			"bad MAC string %d fetch, %d\n", e->iMACAddress, tmp);
+		if (tmp >= 0)
+			tmp = -EINVAL;
+		return tmp;
+	}
+	for (i = tmp = 0; i < 6; i++, tmp += 2)
+		dev->net->dev_addr [i] =
+			(nibble(buf [tmp]) << 4) + nibble(buf [tmp + 1]);
+	return 0;
+}
+
+#endif
+
 static int cdc_bind(struct usbnet *dev, struct usb_interface *intf)
 {
 	int				status;
@@ -396,8 +433,11 @@ static int cdc_bind(struct usbnet *dev, struct usb_interface *intf)
 	status = usbnet_generic_cdc_bind(dev, intf);
 	if (status < 0)
 		return status;
-
+#if (LINUX_VERSION_CODE > KERNEL_VERSION(2,6,31)) /* ctc/daniel */
 	status = usbnet_get_ethernet_addr(dev, info->ether->iMACAddress);
+#else
+	status = get_ethernet_addr(dev, info->ether);
+#endif
 	if (status < 0) {
 		usb_set_intfdata(info->data, NULL);
 		usb_driver_release_interface(driver_of(intf), info->data);
@@ -437,6 +477,16 @@ static const struct usb_device_id	products [] = {
 	.bInterfaceClass	= USB_CLASS_COMM, \
 	.bInterfaceSubClass	= USB_CDC_SUBCLASS_ETHERNET, \
 	.bInterfaceProtocol	= USB_CDC_PROTO_NONE
+
+#if 1 //ctc
+/* Altair LTE modem. uses the class, needs a custom driver; */
+{
+        .match_flags    =   USB_DEVICE_ID_MATCH_DEVICE,
+        .idVendor               = 0x216f,
+        .idProduct              = 0x0040,
+        .driver_info            = 0,
+},
+#endif
 
 /* SA-1100 based Sharp Zaurus ("collie"), or compatible;
  * wire-incompatible with true CDC Ethernet implementations.

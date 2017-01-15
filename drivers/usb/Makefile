@@ -9,6 +9,7 @@ obj-$(CONFIG_USB)		+= core/
 obj-$(CONFIG_USB_MON)		+= mon/
 
 obj-$(CONFIG_PCI)		+= host/
+obj-$(CONFIG_USB_HOST_IFX)	+= host/
 obj-$(CONFIG_USB_EHCI_HCD)	+= host/
 obj-$(CONFIG_USB_ISP116X_HCD)	+= host/
 obj-$(CONFIG_USB_OHCI_HCD)	+= host/
@@ -44,3 +45,5 @@ obj-y				+= early/
 
 obj-$(CONFIG_USB_ATM)		+= atm/
 obj-$(CONFIG_USB_SPEEDTOUCH)	+= atm/
+
+-include $(srctree)/drivers/usb/Makefile.ifx

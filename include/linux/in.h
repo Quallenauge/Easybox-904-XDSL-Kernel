@@ -84,6 +84,12 @@ struct in_addr {
 #define IP_ORIGDSTADDR       20
 #define IP_RECVORIGDSTADDR   IP_ORIGDSTADDR
 
+/* Terry 20130516, To pass MCAST L2 information to userspace */
+#if 1
+/* MSB means customized info */
+#define IP_PKTINFO_MCASTL2		(0x80 + 1)
+#endif
+
 /* IP_MTU_DISCOVER values */
 #define IP_PMTUDISC_DONT		0	/* Never send DF frames */
 #define IP_PMTUDISC_WANT		1	/* Use per route hints	*/
@@ -182,6 +188,18 @@ struct in_pktinfo
 	struct in_addr	ipi_addr;
 };
 
+/* Terry 20130516, To pass MCAST L2 information to userspace */
+#if 1
+struct in_pktinfo_mcastl2 {
+	int		swport;					/* Ingress switch port */
+	int		rtlswport;				/* Ingress RTL switch port */
+	int		brport;					/* Ingress bridge port */
+	int		brifindex;				/* Ingress bridge ifindex */
+	int		ifindex;				/* Ingress logical interface */
+	__u8	src_mac[6];				/* Source mac address */
+};
+#endif
+ 
 /* Structure describing an Internet (IP) socket address. */
 #define __SOCK_SIZE__	16		/* sizeof(struct sockaddr)	*/
 struct sockaddr_in {

@@ -36,6 +36,10 @@
 #include <asm/mipsmtregs.h>
 #include <asm/system.h>
 
+#if defined(CONFIG_AR9) || defined(CONFIG_VR9)
+#include <asm/ifx/irq.h>
+#endif
+
 static inline void unmask_mips_irq(unsigned int irq)
 {
 	set_c0_status(0x100 << (irq - MIPS_CPU_IRQ_BASE));
@@ -48,6 +52,7 @@ static inline void mask_mips_irq(unsigned int irq)
 	irq_disable_hazard();
 }
 
+#if !(defined(CONFIG_AR9) || defined(CONFIG_VR9))
 static struct irq_chip mips_cpu_irq_controller = {
 	.name		= "MIPS",
 	.ack		= mask_mips_irq,
@@ -56,6 +61,7 @@ static struct irq_chip mips_cpu_irq_controller = {
 	.unmask		= unmask_mips_irq,
 	.eoi		= unmask_mips_irq,
 };
+#endif
 
 /*
  * Basically the same as above but taking care of all the MT stuff
@@ -69,8 +75,13 @@ static unsigned int mips_mt_cpu_irq_startup(unsigned int irq)
 	unsigned int vpflags = dvpe();
 
 	clear_c0_cause(0x100 << (irq - MIPS_CPU_IRQ_BASE));
+#if !(defined(CONFIG_AR9) || defined(CONFIG_VR9))
 	evpe(vpflags);
+#endif
 	unmask_mips_mt_irq(irq);
+#if defined(CONFIG_AR9) || defined(CONFIG_VR9)
+	evpe(vpflags);
+#endif
 
 	return 0;
 }
@@ -115,7 +126,13 @@ void __init mips_cpu_irq_init(void)
 			set_irq_chip_and_handler(i, &mips_mt_cpu_irq_controller,
 						 handle_percpu_irq);
 
+/* Avoid reinitialisation of the 6 hardware interrupts incase of AR9 and VR9 platfoms
+   incase of Danube/ASE initialises 6 hw interrupt.
+   Need to Check ?? 
+*/
+#if !(defined(CONFIG_AR9) || defined(CONFIG_VR9))
 	for (i = irq_base + 2; i < irq_base + 8; i++)
 		set_irq_chip_and_handler(i, &mips_cpu_irq_controller,
 					 handle_percpu_irq);
+#endif
 }

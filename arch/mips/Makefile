@@ -48,7 +48,9 @@ ifneq ($(SUBARCH),$(ARCH))
   endif
 endif
 
+ifndef CONFIG_PROFILING
 cflags-y := -ffunction-sections
+endif
 cflags-y += $(call cc-option, -mno-check-zero-division)
 
 ifdef CONFIG_32BIT
@@ -332,6 +334,8 @@ core-$(CONFIG_MIPS_MALTA)	+= arch/mips/mti-malta/
 cflags-$(CONFIG_MIPS_MALTA)	+= -I$(srctree)/arch/mips/include/asm/mach-malta
 load-$(CONFIG_MIPS_MALTA)	+= 0xffffffff80100000
 all-$(CONFIG_MIPS_MALTA)	:= vmlinux.bin
+
+-include $(srctree)/arch/mips/Makefile.ifx
 
 #
 # MIPS SIM
@@ -710,6 +714,15 @@ vmlinux.ecoff: $(vmlinux-32)
 
 vmlinux.srec: $(vmlinux-32)
 	+@$(call makeboot,$@)
+
+uImage.lzma: $(vmlinux-32)
+	+@$(call makeboot,LOADADDR=$(load-y) $@)
+
+uImage.bzip2: $(vmlinux-32)
+	+@$(call makeboot,LOADADDR=$(load-y) $@)
+
+uImage.gzip: $(vmlinux-32)
+	+@$(call makeboot,LOADADDR=$(load-y) $@)
 
 CLEAN_FILES += vmlinux.ecoff \
 	       vmlinux.srec

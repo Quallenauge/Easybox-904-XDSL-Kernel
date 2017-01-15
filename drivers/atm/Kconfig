@@ -397,4 +397,6 @@ config ATM_SOLOS
 	help
 	  Support for the Solos multiport ADSL2+ card.
 
+source "drivers/atm/Kconfig.ifx"
+
 endif # ATM

@@ -154,7 +154,7 @@ extern int ipv6_chk_mcast_addr(struct net_device *dev,
 			       const struct in6_addr *src_addr);
 extern int ipv6_is_mld(struct sk_buff *skb, int nexthdr);
 
-extern void addrconf_prefix_rcv(struct net_device *dev, u8 *opt, int len);
+extern int addrconf_prefix_rcv(struct net_device *dev, u8 *opt, int len);
 
 /*
  *	anycast prototypes (anycast.c)
@@ -260,6 +260,8 @@ static inline int ipv6_addr_is_isatap(const struct in6_addr *addr)
 #ifdef CONFIG_PROC_FS
 extern int if6_proc_init(void);
 extern void if6_proc_exit(void);
+extern int flags6_proc_init(void);
+extern void flags6_proc_exit(void);
 #endif
 
 #endif

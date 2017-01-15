@@ -10,3 +10,4 @@ obj-$(CONFIG_MMC)		+= core/
 obj-$(CONFIG_MMC)		+= card/
 obj-$(CONFIG_MMC)		+= host/
 
+-include $(srctree)/drivers/mmc/Makefile.ifx

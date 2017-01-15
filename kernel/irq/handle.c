@@ -448,7 +448,12 @@ irqreturn_t handle_IRQ_event(unsigned int irq, struct irqaction *action)
  * This is the original x86 implementation which is used for every
  * interrupt type.
  */
+
+#ifdef CONFIG_LTQ_SYS_OPT
+unsigned int __system __do_IRQ(unsigned int irq) 
+#else
 unsigned int __do_IRQ(unsigned int irq)
+#endif
 {
 	struct irq_desc *desc = irq_to_desc(irq);
 	struct irqaction *action;

@@ -29,6 +29,9 @@
 #include <linux/rcupdate.h>
 #include <linux/dmaengine.h>
 #include <linux/hrtimer.h>
+#if defined(CONFIG_IMQ) || defined(CONFIG_IMQ_MODULE)
+#include <linux/imq.h>
+#endif
 
 /* Don't change this without changing skb_csum_unnecessary! */
 #define CHECKSUM_NONE 0
@@ -44,7 +47,7 @@
 	SKB_WITH_OVERHEAD((PAGE_SIZE << (ORDER)) - (X))
 #define SKB_MAX_HEAD(X)		(SKB_MAX_ORDER((X), 0))
 #define SKB_MAX_ALLOC		(SKB_MAX_ORDER(0, 2))
-
+#define NFMARK_SHIFT_MASK 0x0000000f
 /* A. Checksumming of received packets by device.
  *
  *	NONE: device failed to checksum this packet.
@@ -330,6 +333,9 @@ struct sk_buff {
 	 * first. This is owned by whoever has the skb queued ATM.
 	 */
 	char			cb[48];
+#if defined(CONFIG_IMQ) || defined(CONFIG_IMQ_MODULE)
+	void			*cb_next;
+#endif
 
 	unsigned int		len,
 				data_len;
@@ -362,6 +368,9 @@ struct sk_buff {
 	struct nf_conntrack	*nfct;
 	struct sk_buff		*nfct_reasm;
 #endif
+#if defined(CONFIG_IMQ) || defined(CONFIG_IMQ_MODULE)
+	struct nf_queue_entry	*nf_queue_entry;
+#endif
 #ifdef CONFIG_BRIDGE_NETFILTER
 	struct nf_bridge_info	*nf_bridge;
 #endif
@@ -382,6 +391,10 @@ struct sk_buff {
 	kmemcheck_bitfield_end(flags2);
 
 	/* 0/14 bit hole */
+
+#if defined(CONFIG_IMQ) || defined(CONFIG_IMQ_MODULE)
+	__u8			imq_flags:IMQ_F_BITS;
+#endif
 
 #ifdef CONFIG_NET_DMA
 	dma_cookie_t		dma_cookie;
@@ -436,6 +449,12 @@ static inline struct rtable *skb_rtable(const struct sk_buff *skb)
 {
 	return (struct rtable *)skb_dst(skb);
 }
+
+
+#if defined(CONFIG_IMQ) || defined(CONFIG_IMQ_MODULE)
+extern int skb_save_cb(struct sk_buff *skb);
+extern int skb_restore_cb(struct sk_buff *skb);
+#endif
 
 extern void kfree_skb(struct sk_buff *skb);
 extern void consume_skb(struct sk_buff *skb);
@@ -1365,9 +1384,20 @@ static inline int skb_network_offset(const struct sk_buff *skb)
  *
  * Various parts of the networking layer expect at least 32 bytes of
  * headroom, you should not reduce this.
+ *
+ * This has been changed to 64 to acommodate for routing between ethernet
+ * and wireless, but only for new allocations
  */
 #ifndef NET_SKB_PAD
+#if defined (CONFIG_AR9) || defined (CONFIG_VR9)
+#define NET_SKB_PAD     64
+#else
 #define NET_SKB_PAD	32
+#endif
+#endif
+
+#ifndef NET_SKB_PAD_ALLOC
+#define NET_SKB_PAD_ALLOC	64
 #endif
 
 extern int ___pskb_trim(struct sk_buff *skb, unsigned int len);
@@ -1459,9 +1489,9 @@ static inline void __skb_queue_purge(struct sk_buff_head *list)
 static inline struct sk_buff *__dev_alloc_skb(unsigned int length,
 					      gfp_t gfp_mask)
 {
-	struct sk_buff *skb = alloc_skb(length + NET_SKB_PAD, gfp_mask);
+	struct sk_buff *skb = alloc_skb(length + NET_SKB_PAD_ALLOC, gfp_mask);
 	if (likely(skb))
-		skb_reserve(skb, NET_SKB_PAD);
+		skb_reserve(skb, NET_SKB_PAD_ALLOC);
 	return skb;
 }
 
@@ -1534,7 +1564,7 @@ static inline int __skb_cow(struct sk_buff *skb, unsigned int headroom,
 		delta = headroom - skb_headroom(skb);
 
 	if (delta || cloned)
-		return pskb_expand_head(skb, ALIGN(delta, NET_SKB_PAD), 0,
+		return pskb_expand_head(skb, ALIGN(delta, NET_SKB_PAD_ALLOC), 0,
 					GFP_ATOMIC);
 	return 0;
 }
@@ -1783,6 +1813,8 @@ extern int	       skb_shift(struct sk_buff *tgt, struct sk_buff *skb,
 
 extern struct sk_buff *skb_segment(struct sk_buff *skb, int features);
 
+extern int skb_mark_priority(struct sk_buff *skb);
+
 static inline void *skb_header_pointer(const struct sk_buff *skb, int offset,
 				       int len, void *buffer)
 {
@@ -1971,6 +2003,10 @@ static inline void __nf_copy(struct sk_buff *dst, const struct sk_buff *src)
 	dst->nfctinfo = src->nfctinfo;
 	dst->nfct_reasm = src->nfct_reasm;
 	nf_conntrack_get_reasm(src->nfct_reasm);
+#endif
+#if defined(CONFIG_IMQ) || defined(CONFIG_IMQ_MODULE)
+	dst->imq_flags = src->imq_flags;
+	dst->nf_queue_entry = src->nf_queue_entry;
 #endif
 #ifdef CONFIG_BRIDGE_NETFILTER
 	dst->nf_bridge  = src->nf_bridge;

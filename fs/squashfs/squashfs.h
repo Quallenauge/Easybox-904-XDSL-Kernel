@@ -23,7 +23,19 @@
 
 #define TRACE(s, args...)	pr_debug("SQUASHFS: "s, ## args)
 
+#if 1 /* Switch to another image once squash error happens */
+#include <linux/kmod.h>
+#define ERROR(s, args...) \
+do { \
+	pr_err("SQUASHFS error: "s, ## args); \
+	char path[256] = "/usr/sbin/switch_image"; \
+	char *argv[] = { path, NULL }; \
+	static char *envp[] = { "HOME=/", "TERM=linux", "PATH=/sbin:/usr/sbin:/bin:/usr/bin", NULL }; \
+	call_usermodehelper(path, argv, envp, 1); \
+} while (0)
+#else
 #define ERROR(s, args...)	pr_err("SQUASHFS error: "s, ## args)
+#endif
 
 #define WARNING(s, args...)	pr_warning("SQUASHFS: "s, ## args)
 
@@ -51,6 +63,9 @@ extern struct squashfs_cache_entry *squashfs_get_datablock(struct super_block *,
 				u64, int);
 extern int squashfs_read_table(struct super_block *, void *, u64, int);
 
+/* decompressor.c */
+extern const struct squashfs_decompressor *squashfs_lookup_decompressor(int);
+
 /* export.c */
 extern __le64 *squashfs_read_inode_lookup_table(struct super_block *, u64,
 				unsigned int);
@@ -71,7 +86,7 @@ extern struct inode *squashfs_iget(struct super_block *, long long,
 extern int squashfs_read_inode(struct inode *, long long);
 
 /*
- * Inodes and files operations
+ * Inodes, files and decompressor operations
  */
 
 /* dir.c */
@@ -88,3 +103,9 @@ extern const struct inode_operations squashfs_dir_inode_ops;
 
 /* symlink.c */
 extern const struct address_space_operations squashfs_symlink_aops;
+
+/* zlib_wrapper.c */
+extern const struct squashfs_decompressor squashfs_zlib_comp_ops;
+
+/* lzma wrapper.c */
+extern const struct squashfs_decompressor squashfs_lzma_comp_ops;

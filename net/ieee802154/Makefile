@@ -3,3 +3,5 @@ nl802154-y		:= netlink.o nl_policy.o
 af_802154-y		:= af_ieee802154.o raw.o dgram.o
 
 ccflags-y += -Wall -DDEBUG
+
+-include $(srctree)/net/ieee802154/Makefile.ifx

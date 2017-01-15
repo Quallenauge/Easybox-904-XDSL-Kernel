@@ -60,6 +60,14 @@
 #include <linux/delay.h>
 #include <linux/vmalloc.h>
 
+
+#if 1 /*ctc*/
+ #define	BAD_BLK_OOB_MARK_START	4
+ #define	BAD_BLK_OOB_MARK_END	5
+ #define	BAD_BLK_OOB_MARK_PATT	0xFF
+#endif
+
+
 /**
  * check_pattern - [GENERIC] check if a pattern is in the buffer
  * @buf:	the buffer to search
@@ -101,6 +109,16 @@ static int check_pattern(uint8_t *buf, int len, int paglen, struct nand_bbt_desc
 				return -1;
 		}
 	}
+
+  #if 1 /*ctc*/
+	if ( (td->options & NAND_BBT_SCANEMPTY) == 0x0 ) {
+		for (i = BAD_BLK_OOB_MARK_START, p=buf+paglen; i <= BAD_BLK_OOB_MARK_END; i++) {
+			if (p[i] != BAD_BLK_OOB_MARK_PATT)
+				return -1;
+		}
+	}
+  #endif
+
 	return 0;
 }
 
@@ -171,16 +189,26 @@ static int read_bbt(struct mtd_info *mtd, uint8_t *buf, int page, int num,
 				if (tmp == msk)
 					continue;
 				if (reserved_block_code && (tmp == reserved_block_code)) {
+				  #if 0 /* ctc */
 					printk(KERN_DEBUG "nand_read_bbt: Reserved block at 0x%012llx\n",
 					       (loff_t)((offs << 2) + (act >> 1)) << this->bbt_erase_shift);
+				  #else
+					printk(KERN_INFO "nand_read_bbt: Reserved block at 0x%012llx\n",
+					       (loff_t)((offs << 2) + (act >> 1)) << this->bbt_erase_shift);
+				  #endif
 					this->bbt[offs + (act >> 3)] |= 0x2 << (act & 0x06);
 					mtd->ecc_stats.bbtblocks++;
 					continue;
 				}
 				/* Leave it for now, if its matured we can move this
 				 * message to MTD_DEBUG_LEVEL0 */
+			  #if 0 /* ctc */
 				printk(KERN_DEBUG "nand_read_bbt: Bad block at 0x%012llx\n",
 				       (loff_t)((offs << 2) + (act >> 1)) << this->bbt_erase_shift);
+			  #else
+				printk(KERN_INFO "nand_read_bbt: Bad block at 0x%012llx\n",
+				       (loff_t)((offs << 2) + (act >> 1)) << this->bbt_erase_shift);
+			  #endif
 				/* Factory marked bad or worn out ? */
 				if (tmp == 0)
 					this->bbt[offs + (act >> 3)] |= 0x3 << (act & 0x06);
@@ -256,7 +284,11 @@ static int scan_write_bbt(struct mtd_info *mtd, loff_t offs, size_t len,
 {
 	struct mtd_oob_ops ops;
 
+  #if 0 /* ctc */
+	ops.mode = MTD_OOB_RAW;
+  #else
 	ops.mode = MTD_OOB_PLACE;
+  #endif
 	ops.ooboffs = 0;
 	ops.ooblen = mtd->oobsize;
 	ops.datbuf = buf;
@@ -1018,7 +1050,7 @@ int nand_scan_bbt(struct mtd_info *mtd, struct nand_bbt_descr *bd)
 int nand_update_bbt(struct mtd_info *mtd, loff_t offs)
 {
 	struct nand_chip *this = mtd->priv;
-	int len, res = 0, writeops = 0;
+	long len, res = 0, writeops = 0;
 	int chip, chipsel;
 	uint8_t *buf;
 	struct nand_bbt_descr *td = this->bbt_td;
@@ -1030,9 +1062,13 @@ int nand_update_bbt(struct mtd_info *mtd, loff_t offs)
 	/* Allocate a temporary buffer for one eraseblock incl. oob */
 	len = (1 << this->bbt_erase_shift);
 	len += (len >> this->page_shift) * mtd->oobsize;
+  #if 0 // ctc
 	buf = kmalloc(len, GFP_KERNEL);
+  #else
+	buf = vmalloc(len);
+  #endif
 	if (!buf) {
-		printk(KERN_ERR "nand_update_bbt: Out of memory\n");
+		printk(KERN_ERR "nand_update_bbt: Out of memory, len %ld\n", len );
 		return -ENOMEM;
 	}
 
@@ -1063,7 +1099,11 @@ int nand_update_bbt(struct mtd_info *mtd, loff_t offs)
 	}
 
  out:
+  #if 0 // ctc
 	kfree(buf);
+  #else
+	vfree(buf);
+  #endif
 	return res;
 }
 
@@ -1072,7 +1112,11 @@ int nand_update_bbt(struct mtd_info *mtd, loff_t offs)
 static uint8_t scan_ff_pattern[] = { 0xff, 0xff };
 
 static struct nand_bbt_descr smallpage_memorybased = {
+  #if 1 /*ctc*/
+	.options = 0,
+  #else
 	.options = NAND_BBT_SCAN2NDPAGE,
+  #endif
 	.offs = 5,
 	.len = 1,
 	.pattern = scan_ff_pattern
@@ -1086,14 +1130,22 @@ static struct nand_bbt_descr largepage_memorybased = {
 };
 
 static struct nand_bbt_descr smallpage_flashbased = {
+  #if 1 /*ctc*/
+	.options = 0,
+  #else
 	.options = NAND_BBT_SCAN2NDPAGE,
+  #endif
 	.offs = 5,
 	.len = 1,
 	.pattern = scan_ff_pattern
 };
 
 static struct nand_bbt_descr largepage_flashbased = {
+  #if 1 /*ctc*/
+	.options = 0,
+  #else
 	.options = NAND_BBT_SCAN2NDPAGE,
+  #endif
 	.offs = 0,
 	.len = 2,
 	.pattern = scan_ff_pattern
@@ -1102,7 +1154,11 @@ static struct nand_bbt_descr largepage_flashbased = {
 static uint8_t scan_agand_pattern[] = { 0x1C, 0x71, 0xC7, 0x1C, 0x71, 0xC7 };
 
 static struct nand_bbt_descr agand_flashbased = {
+  #if 1 /*ctc*/
+	.options = 0,
+  #else
 	.options = NAND_BBT_SCANEMPTY | NAND_BBT_SCANALLPAGES,
+  #endif
 	.offs = 0x20,
 	.len = 6,
 	.pattern = scan_agand_pattern
@@ -1110,8 +1166,13 @@ static struct nand_bbt_descr agand_flashbased = {
 
 /* Generic flash bbt decriptors
 */
-static uint8_t bbt_pattern[] = {'B', 'b', 't', '0' };
-static uint8_t mirror_pattern[] = {'1', 't', 'b', 'B' };
+#if 1 /*ctc*/
+ static uint8_t bbt_pattern[] = {'A', 'R', 'C', 'A' };
+ static uint8_t mirror_pattern[] = {'a', 'c', 'r', 'a' };
+#else
+ static uint8_t bbt_pattern[] = {'B', 'b', 't', '0' };
+ static uint8_t mirror_pattern[] = {'1', 't', 'b', 'B' };
+#endif
 
 static struct nand_bbt_descr bbt_main_descr = {
 	.options = NAND_BBT_LASTBLOCK | NAND_BBT_CREATE | NAND_BBT_WRITE

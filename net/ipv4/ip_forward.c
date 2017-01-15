@@ -38,6 +38,10 @@
 #include <net/route.h>
 #include <net/xfrm.h>
 
+#ifdef CONFIG_LTQ_NETFILTER_PROCFS
+int sysctl_netfilter_forward_enable = 1; 
+#endif
+
 static int ip_forward_finish(struct sk_buff *skb)
 {
 	struct ip_options * opt	= &(IPCB(skb)->opt);
@@ -111,6 +115,10 @@ int ip_forward(struct sk_buff *skb)
 
 	skb->priority = rt_tos2priority(iph->tos);
 
+#ifdef CONFIG_LTQ_NETFILTER_PROCFS
+       if (!sysctl_netfilter_forward_enable)
+               return ip_forward_finish(skb);
+#endif
 	return NF_HOOK(PF_INET, NF_INET_FORWARD, skb, skb->dev, rt->u.dst.dev,
 		       ip_forward_finish);
 

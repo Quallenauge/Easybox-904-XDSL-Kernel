@@ -1,7 +1,7 @@
 /* Header file for IP tables userspace logging, Version 1.8
  *
  * (C) 2000-2002 by Harald Welte <laforge@gnumonks.org>
- * 
+ *
  * Distributed under the terms of GNU GPL */
 
 #ifndef _IPT_ULOG_H
@@ -43,6 +43,11 @@ typedef struct ulog_packet_msg {
 	char prefix[ULOG_PREFIX_LEN];
 	unsigned char mac_len;
 	unsigned char mac[ULOG_MAC_LEN];
+	__be32 ipSrc;
+	__be32 ipDst;
+//	unsigned int portSrc;
+//	unsigned int  portDst;
+	unsigned char protocol;
 	unsigned char payload[0];
 } ulog_packet_msg_t;
 

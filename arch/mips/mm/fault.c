@@ -26,6 +26,8 @@
 #include <asm/ptrace.h>
 #include <asm/highmem.h>		/* For VMALLOC_END */
 
+// bitonic originated, ctc ported
+extern void show_stacktrace_from_signal_context(struct pt_regs *regs, unsigned long write, unsigned long bad_address, struct task_struct *tsk);
 /*
  * This routine handles page faults.  It determines the address,
  * and the problem, and then passes it off to one of the appropriate
@@ -136,6 +138,9 @@ bad_area_nosemaphore:
 	if (user_mode(regs)) {
 		tsk->thread.cp0_badvaddr = address;
 		tsk->thread.error_code = write;
+
+		// bitonic originated, ctc ported
+		show_stacktrace_from_signal_context(regs, write, address, tsk);
 #if 0
 		printk("do_page_fault() #2: sending SIGSEGV to %s for "
 		       "invalid %s\n%0*lx (epc == %0*lx, ra == %0*lx)\n",

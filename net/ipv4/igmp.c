@@ -113,7 +113,11 @@
 
 #define IGMP_V1_Router_Present_Timeout		(400*HZ)
 #define IGMP_V2_Router_Present_Timeout		(400*HZ)
+#if 0 
 #define IGMP_Unsolicited_Report_Interval	(10*HZ)
+#else
+#define IGMP_Unsolicited_Report_Interval	(2*HZ)
+#endif
 #define IGMP_Query_Response_Interval		(10*HZ)
 #define IGMP_Unsolicited_Report_Count		2
 
@@ -147,6 +151,22 @@ static void sf_markstate(struct ip_mc_list *pmc);
 static void ip_mc_clear_src(struct ip_mc_list *pmc);
 static int ip_mc_add_src(struct in_device *in_dev, __be32 *pmca, int sfmode,
 			 int sfcount, __be32 *psfsrc, int delta);
+
+#ifdef CONFIG_LTQ_NETFILTER_PROCFS
+extern int sysctl_netfilter_output_enable; 
+#endif
+
+#ifdef CONFIG_LTQ_NETFILTER_PROCFS
+extern int sysctl_netfilter_output_enable; 
+#endif
+
+#ifdef CONFIG_LTQ_NETFILTER_PROCFS
+extern int sysctl_netfilter_output_enable; 
+#endif
+
+#ifdef CONFIG_LTQ_NETFILTER_PROCFS
+extern int sysctl_netfilter_output_enable; 
+#endif
 
 static void ip_ma_put(struct ip_mc_list *im)
 {
@@ -395,8 +415,14 @@ static struct sk_buff *add_grec(struct sk_buff *skb, struct ip_mc_list *pmc,
 	struct ip_sf_list *psf, *psf_next, *psf_prev, **psf_list;
 	int scount, stotal, first, isquery, truncate;
 
+	/* Terry 20120911, Fix HOMEGW-14060 - 'Local Control Block address' should not be in the IGMP report. */
+#if 1
+	if ((pmc->multiaddr & IGMP_LOCAL_GROUP_MASK) == IGMP_LOCAL_GROUP)
+		return skb;
+#else
 	if (pmc->multiaddr == IGMP_ALL_HOSTS)
 		return skb;
+#endif
 
 	isquery = type == IGMPV3_MODE_IS_INCLUDE ||
 		  type == IGMPV3_MODE_IS_EXCLUDE;
@@ -641,6 +667,13 @@ static int igmp_send_report(struct in_device *in_dev, struct ip_mc_list *pmc,
 	else
 		dst = group;
 
+	/* Terry 20120911, Fix HOMEGW-14060 - 'Local Control Block address' should not be in the IGMP report. */
+#if 1
+	if ((group & IGMP_LOCAL_GROUP_MASK) == IGMP_LOCAL_GROUP) {
+		return -1;
+	}
+#endif
+	
 	{
 		struct flowi fl = { .oif = dev->ifindex,
 				    .nl_u = { .ip4_u = { .daddr = dst } },
@@ -1145,8 +1178,13 @@ static void igmp_group_dropped(struct ip_mc_list *im)
 		}
 		/* IGMPv3 */
 		igmpv3_add_delrec(in_dev, im);
-
+#if 0 
 		igmp_ifc_event(in_dev);
+#endif
+		in_dev->mr_ifc_count = in_dev->mr_qrv ? in_dev->mr_qrv :
+			IGMP_Unsolicited_Report_Count;
+		in_dev_hold(in_dev);
+		igmp_ifc_timer_expire(in_dev);
 	}
 done:
 #endif
@@ -1169,16 +1207,28 @@ static void igmp_group_added(struct ip_mc_list *im)
 	if (in_dev->dead)
 		return;
 	if (IGMP_V1_SEEN(in_dev) || IGMP_V2_SEEN(in_dev)) {
+#if 0 
 		spin_lock_bh(&im->lock);
 		igmp_start_timer(im, IGMP_Initial_Report_Delay);
 		spin_unlock_bh(&im->lock);
+#else
+		atomic_inc(&im->refcnt);
+		igmp_timer_expire(im);
+#endif
 		return;
 	}
 	/* else, v3 */
 
 	im->crcount = in_dev->mr_qrv ? in_dev->mr_qrv :
 		IGMP_Unsolicited_Report_Count;
+#if 0 
 	igmp_ifc_event(in_dev);
+#else
+	in_dev->mr_ifc_count = in_dev->mr_qrv ? in_dev->mr_qrv :
+		IGMP_Unsolicited_Report_Count;
+	in_dev_hold(in_dev);
+	igmp_ifc_timer_expire(in_dev);
+#endif
 #endif
 }
 

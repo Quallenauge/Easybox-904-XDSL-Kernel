@@ -363,6 +363,10 @@ static int nand_default_block_markbad(struct mtd_info *mtd, loff_t ofs)
 	uint8_t buf[2] = { 0, 0 };
 	int block, ret;
 
+  #if 1 /* ctc */
+	printk(KERN_INFO "nand_default_block_markbad: bad block at 0x%012llx\n", ofs );
+  #endif
+
 	/* Get block number */
 	block = (int)(ofs >> chip->bbt_erase_shift);
 	if (chip->bbt)

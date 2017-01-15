@@ -54,6 +54,9 @@
 #include <net/xfrm.h>
 #include <net/checksum.h>
 #include <linux/mroute6.h>
+#if defined(CONFIG_IFX_PPA_API) || defined(CONFIG_IFX_PPA_API_MODULE)
+  #include <net/ifx_ppa_api.h>
+#endif
 
 static int ip6_fragment(struct sk_buff *skb, int (*output)(struct sk_buff *));
 
@@ -85,6 +88,26 @@ EXPORT_SYMBOL_GPL(ip6_local_out);
 static int ip6_output_finish(struct sk_buff *skb)
 {
 	struct dst_entry *dst = skb_dst(skb);
+#if defined(CONFIG_IFX_PPA_API) || defined(CONFIG_IFX_PPA_API_MODULE)
+	if ( ppa_hook_session_add_fn != NULL )
+	{
+	#ifdef CONFIG_NF_CONNTRACK
+		struct nf_conn *ct;
+	#else
+		struct ip_conntrack *ct;
+	#endif
+		enum ip_conntrack_info ctinfo;
+		uint32_t flags;
+	#ifdef CONFIG_NF_CONNTRACK
+		ct = nf_ct_get(skb, &ctinfo);
+	#else
+		ct = ip_conntrack_get(skb, &ctinfo);
+	#endif
+		flags = 0; //  post routing
+		flags |= CTINFO2DIR(ctinfo) == IP_CT_DIR_ORIGINAL ? PPA_F_SESSION_ORG_DIR : PPA_F_SESSION_REPLY_DIR;  
+		ppa_hook_session_add_fn(skb, ct, flags);
+	}
+#endif
 
 	if (dst->hh)
 		return neigh_hh_output(dst->hh, skb);

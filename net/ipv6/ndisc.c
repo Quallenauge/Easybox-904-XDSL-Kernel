@@ -1105,6 +1105,18 @@ errout:
 	rtnl_set_sk_err(net, RTNLGRP_ND_USEROPT, err);
 }
 
+static inline int accept_ra(struct inet6_dev *in6_dev)
+{
+	/*
+	 * If forwarding is enabled, RA are not accepted unless the special
+	 * hybrid mode (accept_ra=2) is enabled.
+	 */
+	if (in6_dev->cnf.forwarding && in6_dev->cnf.accept_ra < 2)
+		return 0;
+
+	return in6_dev->cnf.accept_ra;
+}
+
 static void ndisc_router_discovery(struct sk_buff *skb)
 {
 	struct ra_msg *ra_msg = (struct ra_msg *)skb_transport_header(skb);
@@ -1158,8 +1170,7 @@ static void ndisc_router_discovery(struct sk_buff *skb)
 		return;
 	}
 
-	/* skip route and link configuration on routers */
-	if (in6_dev->cnf.forwarding || !in6_dev->cnf.accept_ra)
+	if (!accept_ra(in6_dev))
 		goto skip_linkparms;
 
 #ifdef CONFIG_IPV6_NDISC_NODETYPE
@@ -1234,6 +1245,9 @@ static void ndisc_router_discovery(struct sk_buff *skb)
 			return;
 		}
 		neigh->flags |= NTF_ROUTER;
+		
+		/* hsubj add to record remote radvd server ipv6 address */
+		memcpy(&in6_dev->radvd_addr, &ipv6_hdr(skb)->saddr, sizeof(struct in6_addr));
 	} else if (rt) {
 		rt->rt6i_flags = (rt->rt6i_flags & ~RTF_PREF_MASK) | RTF_PREF(pref);
 	}
@@ -1309,8 +1323,7 @@ skip_linkparms:
 			     NEIGH_UPDATE_F_ISROUTER);
 	}
 
-	/* skip route and link configuration on routers */
-	if (in6_dev->cnf.forwarding || !in6_dev->cnf.accept_ra)
+	if (!accept_ra(in6_dev))
 		goto out;
 
 #ifdef CONFIG_IPV6_ROUTE_INFO
@@ -1339,13 +1352,28 @@ skip_linkparms:
 		goto out;
 #endif
 
+	/*
+	 *	If the HG receives a RA with erroneous prefix information or no prefix at all, 
+	 *	it MUST log an IPv6 error and retry according <alg_01> described in TOCPE0051.
+	 */
 	if (in6_dev->cnf.accept_ra_pinfo && ndopts.nd_opts_pi) {
 		struct nd_opt_hdr *p;
 		for (p = ndopts.nd_opts_pi;
 		     p;
 		     p = ndisc_next_option(p, ndopts.nd_opts_pi_end)) {
-			addrconf_prefix_rcv(skb->dev, (u8*)p, (p->nd_opt_len) << 3);
+			if(addrconf_prefix_rcv(skb->dev, (u8*)p, (p->nd_opt_len) << 3)) {
+				/* Clear flags for stateless addrconf,  */
+				in6_dev->if_flags &= ~(IF_RA_RCVD|IF_RA_MANAGED|IF_RA_OTHERCONF);
+				printk(KERN_DEBUG "addrconf_prefix_rcv return error for %s.\n", skb->dev->name);
+				goto out;
+			}
 		}
+	}
+	else {
+		/* Clear flags for stateless addrconf */
+		in6_dev->if_flags &= ~(IF_RA_RCVD|IF_RA_MANAGED|IF_RA_OTHERCONF);
+		printk(KERN_DEBUG "no prefix info in RA for %s.\n", skb->dev->name);
+		goto out;
 	}
 
 	if (ndopts.nd_opts_mtu) {

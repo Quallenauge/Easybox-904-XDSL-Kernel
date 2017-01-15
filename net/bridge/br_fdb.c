@@ -24,6 +24,9 @@
 #include <asm/unaligned.h>
 #include "br_private.h"
 
+#if defined(CONFIG_IFX_PPA_API) || defined(CONFIG_IFX_PPA_API_MODULE)
+  #include <net/ifx_ppa_api.h>
+#endif
 static struct kmem_cache *br_fdb_cache __read_mostly;
 static int fdb_insert(struct net_bridge *br, struct net_bridge_port *source,
 		      const unsigned char *addr);
@@ -80,6 +83,10 @@ static void fdb_rcu_free(struct rcu_head *head)
 
 static inline void fdb_delete(struct net_bridge_fdb_entry *f)
 {
+#if defined(CONFIG_IFX_PPA_API) || defined(CONFIG_IFX_PPA_API_MODULE)
+    if ( ppa_hook_bridge_entry_delete_fn != NULL )
+        ppa_hook_bridge_entry_delete_fn(f->addr.addr, 0);
+#endif
 	hlist_del_rcu(&f->hlist);
 	call_rcu(&f->rcu, fdb_rcu_free);
 }
@@ -137,6 +144,15 @@ void br_fdb_cleanup(unsigned long _data)
 
 		hlist_for_each_entry_safe(f, h, n, &br->hash[i], hlist) {
 			unsigned long this_timer;
+#if defined(CONFIG_IFX_PPA_API) || defined(CONFIG_IFX_PPA_API_MODULE)
+            if ( ppa_hook_bridge_entry_hit_time_fn != NULL && !f->is_local )
+            {
+                uint32_t last_hit_time;
+
+                if ( ppa_hook_bridge_entry_hit_time_fn(f->addr.addr, &last_hit_time) == IFX_PPA_HIT )
+                f->ageing_timer = last_hit_time * HZ;
+            }
+#endif
 			if (f->is_static)
 				continue;
 			this_timer = f->ageing_timer + delay;
@@ -411,6 +427,14 @@ void br_fdb_update(struct net_bridge *br, struct net_bridge_port *source,
 		/* else  we lose race and someone else inserts
 		 * it first, don't bother updating
 		 */
+#if defined(CONFIG_IFX_PPA_API) || defined(CONFIG_IFX_PPA_API_MODULE)
+        if ( ppa_hook_bridge_entry_add_fn != NULL && source->dev )
+            ppa_hook_bridge_entry_add_fn((unsigned char *)addr, source->dev, 0);
+#endif
 		spin_unlock(&br->hash_lock);
 	}
 }
+#if defined(CONFIG_IFX_PPA_API_MODULE)
+  EXPORT_SYMBOL(__br_fdb_get);
+  EXPORT_SYMBOL(br_dev_xmit);
+#endif

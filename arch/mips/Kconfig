@@ -671,6 +671,8 @@ config CAVIUM_OCTEON_REFERENCE_BOARD
 		Hikari
 	  Say Y here for most Octeon reference boards.
 
+source "arch/mips/Kconfig.ifx"
+
 endchoice
 
 source "arch/mips/alchemy/Kconfig"
@@ -842,6 +844,17 @@ config I8259
 config MIPS_BONITO64
 	bool
 
+config MIPS_FPU_EMU
+	bool "Enable FPU emulation"
+	default y
+	help
+	   This option allows building a kernel with or without the Algorithmics
+	   FPU emulator enabled. Turning off this option results in a kernel which
+	   does not catch floating operations exceptions. Make sure that your toolchain
+	   is configured to enable software floating point emulation in that case.
+		
+	   If unsure say Y here.
+
 config MIPS_MSC
 	bool
 
@@ -853,6 +866,13 @@ config MIPS_DISABLE_OBSOLETE_IDE
 
 config SYNC_R4K
 	bool
+
+config MIPS_MACHINE
+	def_bool n
+
+config IMAGE_CMDLINE_HACK
+	bool "OpenWrt specific image command line hack"
+	default n
 
 config NO_IOPORT
 	def_bool n
@@ -1423,6 +1443,24 @@ config HARDWARE_WATCHPOINTS
 
 menu "Kernel type"
 
+config LTQ 
+	bool "Enable LTQ enhancements"
+	default y
+	help
+	Enables all config options and features added by LTQ.
+
+config LTQ_SYS_OPT
+	bool "LTQ sys optimization"
+	depends on LTQ 
+	help
+	Enbaling this feature improves the networking performance
+	due to LTQ enhancements to IRQ scheduling.
+
+config LTQ_OPTIMIZATION
+	bool "Kernel LTQ optimizations"
+	help
+	Kernel LTQ optimizations
+
 choice
 
 	prompt "Kernel code model"
@@ -1609,6 +1647,49 @@ config MIPS_VPE_LOADER
 	  Includes a loader for loading an elf relocatable object
 	  onto another VPE and running it.
 
+config IFX_VPE_EXT
+	bool "IFX APRP Extensions"
+	depends on MIPS_VPE_LOADER
+	default y
+	help
+	  IFX included extensions in APRP
+
+config IFX_VPE_CACHE_SPLIT
+	bool "IFX Cache Split Ways"
+	depends on IFX_VPE_EXT
+	help
+	  IFX extension for reserving (splitting) cache ways among VPEs. You must
+	  give kernel command line arguments vpe_icache_shared=0 or
+	  vpe_dcache_shared=0 to enable splitting of icache or dcache
+	  respectively. Then you can specify which cache ways should be
+	  assigned to which VPE. There are total 8 cache ways, 4 each
+	  for dcache and icache: dcache_way0, dcache_way1,dcache_way2,
+	  dcache_way3 and icache_way0,icache_way1, icache_way2,icache_way3.
+	  
+	  For example, if you specify vpe_icache_shared=0 and icache_way2=1,
+	  then the 3rd icache way will be assigned to VPE0 and denied in VPE1.
+
+	  For icache, software is required to make atleast one cache way available
+	  for a VPE at all times i.e., one can't assign all the icache ways to one VPE.
+	  
+	  By default, vpe_dcache_shared and vpe_icache_shared are set to 1
+	  (i.e., both icache and dcache are shared among VPEs)
+
+config PERFCTRS
+	bool "34K Performance counters"
+	depends on MIPS_MT && PROC_FS
+	default n
+	help
+	  34K Performance counter through /proc
+
+config MTSCHED
+	bool "Support mtsched priority configuration for TCs"
+	depends on MIPS_MT && PROC_FS
+	default y
+	help
+	  Support for mtsched priority configuration for TCs through
+	  /proc/mips/mtsched
+ 
 config MIPS_MT_SMTC_IM_BACKSTOP
 	bool "Use per-TC register bits as backstop for inhibited IM bits"
 	depends on MIPS_MT_SMTC
@@ -2046,6 +2127,7 @@ config PCI
 	bool "Support for PCI controller"
 	depends on HW_HAS_PCI
 	select PCI_DOMAINS
+	select ARCH_SUPPORTS_MSI if (VR9 && IFX_PCIE)
 	help
 	  Find out whether you have a PCI motherboard. PCI is the name of a
 	  bus system, i.e. the way the CPU talks to the other stuff inside
@@ -2054,6 +2136,8 @@ config PCI
 
 config PCI_DOMAINS
 	bool
+
+source "drivers/pci/pcie/Kconfig"
 
 source "drivers/pci/Kconfig"
 

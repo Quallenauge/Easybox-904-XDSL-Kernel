@@ -62,15 +62,36 @@ struct gether {
 
 	/* hooks for added framing, as needed for RNDIS and EEM. */
 	u32				header_len;
-	struct sk_buff			*(*wrap)(struct gether *port,
-						struct sk_buff *skb);
-	int				(*unwrap)(struct gether *port,
+	#if defined(__IFX_USB_GADGET__) && defined(__RETAIN_BUF_TX__)
+		int (*wrap)(struct gether *port,
+						u8 *buf,
+						struct sk_buff *skb,
+						int max_len);
+	#else
+		struct sk_buff *(*wrap)(struct gether *, struct sk_buff *skb);
+	#endif
+
+	#if defined(__IFX_USB_GADGET__) && defined(__RETAIN_BUF_RX__)
+		int		(*unwrap)(	struct gether *port,
+							u8 *buf, u16 len,
+							struct sk_buff_head *list);
+	#else
+		int		(*unwrap)(struct gether *,
 						struct sk_buff *skb,
 						struct sk_buff_head *list);
+	#endif
 
 	/* called on network open/close */
 	void				(*open)(struct gether *);
 	void				(*close)(struct gether *);
+
+	#if defined(__MAC_ECM_FIX__)
+		int                  ecm_only;
+		int                  ecm_only_postive;
+		int                  ecm_only_negtive;
+			#define ecm_only_postive_max 3
+			#define ecm_only_negtive_max 5
+	#endif
 };
 
 #define	DEFAULT_FILTER	(USB_CDC_PACKET_TYPE_BROADCAST \
@@ -80,7 +101,8 @@ struct gether {
 
 
 /* netdev setup/teardown as directed by the gadget driver */
-int gether_setup(struct usb_gadget *g, u8 ethaddr[ETH_ALEN]);
+//int gether_setup(struct usb_gadget *g, u8 ethaddr[ETH_ALEN]);
+int gether_setup(struct usb_gadget *g, u8 hostaddr[ETH_ALEN], u8 devaddr[ETH_ALEN]);
 void gether_cleanup(void);
 
 /* connect/disconnect is handled by individual functions */

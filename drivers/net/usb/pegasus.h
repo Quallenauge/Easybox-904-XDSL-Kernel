@@ -86,6 +86,9 @@ typedef struct pegasus {
 	struct usb_device	*usb;
 	struct usb_interface	*intf;
 	struct net_device	*net;
+  #if defined(CONFIG_IFX_PPA_API_DIRECTPATH) || defined(CONFIG_IFX_PPA_API_INDIRECTPATH) //ctc
+	unsigned int		g_if_id;
+  #endif
 	struct net_device_stats	stats;
 	struct mii_if_info	mii;
 	unsigned		flags;

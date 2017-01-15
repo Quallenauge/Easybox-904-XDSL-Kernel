@@ -66,6 +66,13 @@ static void ipip6_fb_tunnel_init(struct net_device *dev);
 static void ipip6_tunnel_init(struct net_device *dev);
 static void ipip6_tunnel_setup(struct net_device *dev);
 
+#if (defined(CONFIG_IFX_PPA_API) || defined(CONFIG_IFX_PPA_API_MODULE))
+    extern int (*ppa_get_6rd_dmac_fn)(struct net_device *, uint8_t *mac);
+    extern struct net_device * (*ppa_get_6rd_phyif_fn)(struct net_device *);
+    static int ppa_get_6rd_dmac(struct net_device *dev,uint8_t *mac);
+    static  struct net_device *ppa_get_6rd_phyif(struct net_device *dev);
+#endif
+
 static int sit_net_id;
 struct sit_net {
 	struct ip_tunnel *tunnels_r_l[HASH_SIZE];
@@ -161,6 +168,23 @@ static void ipip6_tunnel_link(struct sit_net *sitn, struct ip_tunnel *t)
 	write_unlock_bh(&ipip6_lock);
 }
 
+static void ipip6_tunnel_clone_6rd(struct net_device *dev, struct sit_net *sitn)
+{
+#ifdef CONFIG_IPV6_SIT_6RD
+	struct ip_tunnel *t = netdev_priv(dev);
+
+	if (t->dev == sitn->fb_tunnel_dev) {
+		ipv6_addr_set(&t->ip6rd.prefix, htonl(0x20020000), 0, 0, 0);
+		t->ip6rd.relay_prefix = 0;
+		t->ip6rd.prefixlen = 16;
+		t->ip6rd.relay_prefixlen = 0;
+	} else {
+		struct ip_tunnel *t0 = netdev_priv(sitn->fb_tunnel_dev);
+		memcpy(&t->ip6rd, &t0->ip6rd, sizeof(t->ip6rd));
+	}
+#endif
+}
+
 static struct ip_tunnel * ipip6_tunnel_locate(struct net *net,
 		struct ip_tunnel_parm *parms, int create)
 {
@@ -204,6 +228,7 @@ static struct ip_tunnel * ipip6_tunnel_locate(struct net *net,
 
 	nt->parms = *parms;
 	ipip6_tunnel_init(dev);
+	ipip6_tunnel_clone_6rd(dev, sitn);
 
 	if (parms->i_flags & SIT_ISATAP)
 		dev->priv_flags |= IFF_ISATAP;
@@ -532,17 +557,41 @@ out:
 	return 0;
 }
 
-/* Returns the embedded IPv4 address if the IPv6 address
-   comes from 6to4 (RFC 3056) addr space */
-
-static inline __be32 try_6to4(struct in6_addr *v6dst)
+/*
+ * Returns the embedded IPv4 address if the IPv6 address
+ * comes from 6rd / 6to4 (RFC 3056) addr space.
+ */
+static inline
+__be32 try_6rd(struct in6_addr *v6dst, struct ip_tunnel *tunnel)
 {
 	__be32 dst = 0;
 
+#ifdef CONFIG_IPV6_SIT_6RD
+	if (ipv6_prefix_equal(v6dst, &tunnel->ip6rd.prefix,
+			      tunnel->ip6rd.prefixlen)) {
+		unsigned pbw0, pbi0;
+		int pbi1;
+		u32 d;
+
+		pbw0 = tunnel->ip6rd.prefixlen >> 5;
+		pbi0 = tunnel->ip6rd.prefixlen & 0x1f;
+
+		d = (ntohl(v6dst->s6_addr32[pbw0]) << pbi0) >>
+		    tunnel->ip6rd.relay_prefixlen;
+
+		pbi1 = pbi0 - tunnel->ip6rd.relay_prefixlen;
+		if (pbi1 > 0)
+			d |= ntohl(v6dst->s6_addr32[pbw0 + 1]) >>
+			     (32 - pbi1);
+
+		dst = tunnel->ip6rd.relay_prefix | htonl(d);
+	}
+#else
 	if (v6dst->s6_addr16[0] == htons(0x2002)) {
 		/* 6to4 v6 addr has 16 bits prefix, 32 v4addr, 16 SLA, ... */
 		memcpy(&dst, &v6dst->s6_addr16[1], 4);
 	}
+#endif
 	return dst;
 }
 
@@ -595,7 +644,7 @@ static netdev_tx_t ipip6_tunnel_xmit(struct sk_buff *skb,
 	}
 
 	if (!dst)
-		dst = try_6to4(&iph6->daddr);
+		dst = try_6rd(&iph6->daddr, tunnel);
 
 	if (!dst) {
 		struct neighbour *neigh = NULL;
@@ -785,9 +834,15 @@ ipip6_tunnel_ioctl (struct net_device *dev, struct ifreq *ifr, int cmd)
 	struct ip_tunnel *t;
 	struct net *net = dev_net(dev);
 	struct sit_net *sitn = net_generic(net, sit_net_id);
+#ifdef CONFIG_IPV6_SIT_6RD
+	struct ip_tunnel_6rd ip6rd;
+#endif
 
 	switch (cmd) {
 	case SIOCGETTUNNEL:
+#ifdef CONFIG_IPV6_SIT_6RD
+	case SIOCGET6RD:
+#endif
 		t = NULL;
 		if (dev == sitn->fb_tunnel_dev) {
 			if (copy_from_user(&p, ifr->ifr_ifru.ifru_data, sizeof(p))) {
@@ -798,9 +853,25 @@ ipip6_tunnel_ioctl (struct net_device *dev, struct ifreq *ifr, int cmd)
 		}
 		if (t == NULL)
 			t = netdev_priv(dev);
-		memcpy(&p, &t->parms, sizeof(p));
-		if (copy_to_user(ifr->ifr_ifru.ifru_data, &p, sizeof(p)))
-			err = -EFAULT;
+
+		err = -EFAULT;
+		if (cmd == SIOCGETTUNNEL) {
+			memcpy(&p, &t->parms, sizeof(p));
+			if (copy_to_user(ifr->ifr_ifru.ifru_data, &p,
+					 sizeof(p)))
+				goto done;
+#ifdef CONFIG_IPV6_SIT_6RD
+		} else {
+			ipv6_addr_copy(&ip6rd.prefix, &t->ip6rd.prefix);
+			ip6rd.relay_prefix = t->ip6rd.relay_prefix;
+			ip6rd.prefixlen = t->ip6rd.prefixlen;
+			ip6rd.relay_prefixlen = t->ip6rd.relay_prefixlen;
+			if (copy_to_user(ifr->ifr_ifru.ifru_data, &ip6rd,
+					 sizeof(ip6rd)))
+				goto done;
+#endif
+		}
+		err = 0;
 		break;
 
 	case SIOCADDTUNNEL:
@@ -921,6 +992,51 @@ ipip6_tunnel_ioctl (struct net_device *dev, struct ifreq *ifr, int cmd)
 		netdev_state_change(dev);
 		break;
 
+#ifdef CONFIG_IPV6_SIT_6RD
+	case SIOCADD6RD:
+	case SIOCCHG6RD:
+	case SIOCDEL6RD:
+		err = -EPERM;
+		if (!capable(CAP_NET_ADMIN))
+			goto done;
+
+		err = -EFAULT;
+		if (copy_from_user(&ip6rd, ifr->ifr_ifru.ifru_data,
+				   sizeof(ip6rd)))
+			goto done;
+
+		t = netdev_priv(dev);
+
+		if (cmd != SIOCDEL6RD) {
+			struct in6_addr prefix;
+			__be32 relay_prefix;
+
+			err = -EINVAL;
+			if (ip6rd.relay_prefixlen > 32 ||
+			    ip6rd.prefixlen + (32 - ip6rd.relay_prefixlen) > 64)
+				goto done;
+
+			ipv6_addr_prefix(&prefix, &ip6rd.prefix,
+					 ip6rd.prefixlen);
+			if (!ipv6_addr_equal(&prefix, &ip6rd.prefix))
+				goto done;
+			relay_prefix = ip6rd.relay_prefix &
+				       htonl(0xffffffffUL <<
+					     (32 - ip6rd.relay_prefixlen));
+			if (relay_prefix != ip6rd.relay_prefix)
+				goto done;
+
+			ipv6_addr_copy(&t->ip6rd.prefix, &prefix);
+			t->ip6rd.relay_prefix = relay_prefix;
+			t->ip6rd.prefixlen = ip6rd.prefixlen;
+			t->ip6rd.relay_prefixlen = ip6rd.relay_prefixlen;
+		} else
+			ipip6_tunnel_clone_6rd(dev, sitn);
+
+		err = 0;
+		break;
+#endif
+
 	default:
 		err = -EINVAL;
 	}
@@ -1039,6 +1155,7 @@ static int sit_init_net(struct net *net)
 	dev_net_set(sitn->fb_tunnel_dev, net);
 
 	ipip6_fb_tunnel_init(sitn->fb_tunnel_dev);
+	ipip6_tunnel_clone_6rd(sitn->fb_tunnel_dev, sitn);
 
 	if ((err = register_netdev(sitn->fb_tunnel_dev)))
 		goto err_reg_dev;
@@ -1095,8 +1212,116 @@ static int __init sit_init(void)
 	if (err < 0)
 		xfrm4_tunnel_deregister(&sit_handler, AF_INET6);
 
+#if (defined(CONFIG_IFX_PPA_API) || defined(CONFIG_IFX_PPA_API_MODULE))
+    ppa_get_6rd_dmac_fn = ppa_get_6rd_dmac;
+    ppa_get_6rd_phyif_fn = ppa_get_6rd_phyif;
+#endif
+
 	return err;
 }
+
+#if (defined(CONFIG_IFX_PPA_API) || defined(CONFIG_IFX_PPA_API_MODULE))
+
+int ppa_get_6rd_dmac(struct net_device *dev, uint8_t *mac)
+{
+    struct ip_tunnel *tunnel;
+    struct iphdr *iph;
+    struct rtable *rt = NULL;
+    struct dst_entry *dst = NULL;
+    struct hh_cache *hh;
+
+    tunnel = netdev_priv(dev);
+    iph = &tunnel->parms.iph;
+
+	if (iph->daddr) {
+    	struct flowi fl = { .nl_u = { .ip4_u =
+    				      { .daddr = iph->daddr,
+    					.saddr = iph->saddr,
+    					.tos = RT_TOS(iph->tos) } },
+    			    .oif = tunnel->parms.link,
+    			    .proto = IPPROTO_IPV6 };
+        
+    	if (!ip_route_output_key(dev_net(dev), &rt, &fl)) {
+                    dst = &rt->u.dst;
+    		}
+	}
+	
+    if(!dst){
+        goto MAC_ERROR;
+    }
+
+    hh = dst->hh;
+    if(!hh){
+       if ( dst->neighbour 
+                && (dst->neighbour->ha[0] != 0
+                || dst->neighbour->ha[1] != 0
+                || dst->neighbour->ha[2] != 0
+                || dst->neighbour->ha[3] != 0
+                || dst->neighbour->ha[4] != 0
+                || dst->neighbour->ha[5] != 0) ){
+                
+            memcpy(mac, (uint8_t *)dst->neighbour->ha, ETH_ALEN);
+        }else{
+            goto MAC_ERROR;
+        }
+    }else{
+        unsigned int seq;
+
+        do {
+            seq = read_seqbegin(&hh->hh_lock);
+            if ( hh->hh_len != ETH_HLEN )
+            {
+                //printk("head length is not correct: hh->hh_len = %d, ETH_HLEN = %d\n", (int)hh->hh_len, ETH_HLEN);
+                goto MAC_ERROR;
+            }
+            else
+            {
+                memcpy(mac, (uint8_t *)hh->hh_data + HH_DATA_ALIGN(hh->hh_len) - hh->hh_len, ETH_ALEN);
+            }
+        } while ( read_seqretry(&hh->hh_lock, seq) );
+    }
+
+    ip_rt_put(rt);
+
+    return 0;
+    
+MAC_ERROR:
+
+    ip_rt_put(rt);
+    return -1;
+    
+}
+
+static  struct net_device *ppa_get_6rd_phyif(struct net_device *dev)
+{
+    struct ip_tunnel *tunnel;
+    struct iphdr *iph;
+    struct rtable *rt = NULL;
+    struct dst_entry *dst = NULL;
+    struct net_device *phydev = NULL;
+
+    tunnel = netdev_priv(dev);
+    iph = &tunnel->parms.iph;
+
+	if (iph->daddr) {
+		struct flowi fl = { .nl_u = { .ip4_u =
+					      { .daddr = iph->daddr,
+						.saddr = iph->saddr,
+						.tos = RT_TOS(iph->tos) } },
+				    .oif = tunnel->parms.link,
+				    .proto = IPPROTO_IPV6 };
+		struct rtable *rt;
+		if (!ip_route_output_key(dev_net(dev), &rt, &fl)) {
+			phydev = rt->u.dst.dev;
+			ip_rt_put(rt);
+		}
+	}
+
+    return phydev;   
+}
+
+#endif
+
 
 module_init(sit_init);
 module_exit(sit_cleanup);

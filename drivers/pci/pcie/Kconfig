@@ -3,7 +3,7 @@
 #
 config PCIEPORTBUS
 	bool "PCI Express support"
-	depends on PCI
+	depends on PCI && VR9
 	help
 	  This automatically enables PCI Express Port Bus support. Users can
 	  choose Native Hot-Plug support, Advanced Error Reporting support,
@@ -26,6 +26,8 @@ config HOTPLUG_PCI_PCIE
 	  When in doubt, say N.
 
 source "drivers/pci/pcie/aer/Kconfig"
+
+source "drivers/pci/pcie/Kconfig.ifx"
 
 #
 # PCI Express ASPM

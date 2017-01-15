@@ -1072,6 +1072,7 @@ struct sighand_struct *lock_task_sighand(struct task_struct *tsk, unsigned long 
 
 	return sighand;
 }
+EXPORT_SYMBOL(lock_task_sighand);
 
 /*
  * send signal info to all the members of a group
@@ -1140,6 +1141,9 @@ kill_proc_info(int sig, struct siginfo *info, pid_t pid)
 	rcu_read_unlock();
 	return error;
 }
+#if 1 //ctc
+EXPORT_SYMBOL(kill_proc_info);
+#endif
 
 /* like kill_pid_info(), but doesn't use uid/euid of "current" */
 int kill_pid_info_as_uid(int sig, struct siginfo *info, struct pid *pid,

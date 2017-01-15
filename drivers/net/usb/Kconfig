@@ -154,6 +154,14 @@ config USB_NET_AX8817X
 	  This driver creates an interface named "ethX", where X depends on
 	  what other networking devices you have in use.
 
+### ctc ###
+config USB_NET_ALTAIR_LTE
+	tristate "Altair LTE"
+	depends on USB_USBNET
+	help
+		This option supports devices Altair LTE p1 type
+###########
+
 config USB_NET_CDCETHER
 	tristate "CDC Ethernet support (smart devices such as cable modems)"
 	depends on USB_USBNET

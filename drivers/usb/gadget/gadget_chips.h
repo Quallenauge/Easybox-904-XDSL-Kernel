@@ -156,6 +156,12 @@
 #define	gadget_is_m66592(g)	0
 #endif
 
+#ifdef __IFX_USB_GADGET__
+	#define gadget_is_ifxusb(g)		!strcmp("ifxusb_pcd", (g)->name)
+#else
+	#define gadget_is_ifxusb(g)	0
+#endif
+
 /* Freescale CPM/QE UDC SUPPORT */
 #ifdef CONFIG_USB_GADGET_FSL_QE
 #define gadget_is_fsl_qe(g)	!strcmp("fsl_qe_udc", (g)->name)
@@ -247,6 +253,10 @@ static inline int usb_gadget_controller_number(struct usb_gadget *gadget)
 		return 0x24;
 	else if (gadget_is_r8a66597(gadget))
 		return 0x25;
+	#ifdef __IFX_USB_GADGET__
+		else if (gadget_is_ifxusb(gadget))
+			return 0x26;
+	#endif
 	return -ENOENT;
 }
 

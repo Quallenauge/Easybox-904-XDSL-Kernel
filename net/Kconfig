@@ -72,10 +72,29 @@ config INET
 
 	  Short answer: say Y.
 
+config IFX_IPQOS
+        bool "IPQOS support"
+        help
+                Infineon IPQOS support
+
+config LTQ_ADDON
+       bool "LTQ Networking enhancements "
+       depends on LTQ && INET
+       help
+         Enables all network related config options and features added by LTQ.
+
+config LTQ_UDP_REDIRECT
+        bool "LTQ Kernel Packet Interface for UDP re-direction"
+        depends on LTQ_ADDON
+        help
+          You can say Y here if you want to use hooks from kernel for
+          UDP re-direction
+
 if INET
 source "net/ipv4/Kconfig"
 source "net/ipv6/Kconfig"
 source "net/netlabel/Kconfig"
+source "net/Kconfig.ifx"
 
 endif # if INET
 
@@ -156,8 +175,17 @@ config NETFILTER_ADVANCED
 	  If you say Y here you can select between all the netfilter modules.
 	  If you say N the more unusual ones will not be shown and the
 	  basic ones needed by most people will default to 'M'.
-
+	
 	  If unsure, say Y.
+
+config LTQ_NETFILTER_PROCFS
+       bool"LTQ netfilter procfs configurability"
+       depends on NETFILTER_ADVANCED && LTQ_ADDON && SYSCTL
+       help
+         If chosen, several hooks will be added to procfs for
+         selecting / deselecting netfilter chains at runtime.
+         It is recommended to be always on.
+
 
 config BRIDGE_NETFILTER
 	bool "Bridged IP/ARP packets filtering"
@@ -245,6 +273,22 @@ config NET_DROP_MONITOR
 	process.  If you don't need network drop alerts, or if you are ok
 	just checking the various proc files and other utilities for
 	drop statistics, say N here.
+
+### ctc ###
+config ARC_PPP_ULOG
+	bool "ARC PPP packet sniffering support"
+	depends on INET && ARC_PPA_PKT_CAPTURE
+	default y
+	help
+	  If selected, PPP packets can be mirrored to user application via netlink.
+
+config ARC_PPP_ULOG_DEBUG
+	bool "ARC PPP packet dump"
+	depends on ARC_PPP_ULOG
+	default n
+	help
+	  If selected, PPP packets can be dumped on console.
+###########
 
 endmenu
 

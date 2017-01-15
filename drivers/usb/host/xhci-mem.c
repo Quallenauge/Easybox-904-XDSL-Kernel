@@ -88,16 +88,16 @@ static void xhci_link_segments(struct xhci_hcd *xhci, struct xhci_segment *prev,
 		return;
 	prev->next = next;
 	if (link_trbs) {
-		prev->trbs[TRBS_PER_SEGMENT-1].link.segment_ptr = next->dma;
+		prev->trbs[TRBS_PER_SEGMENT-1].link.segment_ptr = SWAP64(next->dma);
 
 		/* Set the last TRB in the segment to have a TRB type ID of Link TRB */
-		val = prev->trbs[TRBS_PER_SEGMENT-1].link.control;
+		val = SWAP32(prev->trbs[TRBS_PER_SEGMENT-1].link.control);
 		val &= ~TRB_TYPE_BITMASK;
 		val |= TRB_TYPE(TRB_LINK);
 		/* Always set the chain bit with 0.95 hardware */
 		if (xhci_link_trb_quirk(xhci))
 			val |= TRB_CHAIN;
-		prev->trbs[TRBS_PER_SEGMENT-1].link.control = val;
+		prev->trbs[TRBS_PER_SEGMENT-1].link.control = SWAP32(val);
 	}
 	xhci_dbg(xhci, "Linking segment 0x%llx to segment 0x%llx (DMA)\n",
 			(unsigned long long)prev->dma,
@@ -168,7 +168,7 @@ static struct xhci_ring *xhci_ring_alloc(struct xhci_hcd *xhci,
 
 	if (link_trbs) {
 		/* See section 4.9.2.1 and 6.4.4.1 */
-		prev->trbs[TRBS_PER_SEGMENT-1].link.control |= (LINK_TOGGLE);
+		prev->trbs[TRBS_PER_SEGMENT-1].link.control |= SWAP32((LINK_TOGGLE));
 		xhci_dbg(xhci, "Wrote link toggle flag to"
 				" segment %p (virtual), 0x%llx (DMA)\n",
 				prev, (unsigned long long)prev->dma);
@@ -197,13 +197,14 @@ struct xhci_container_ctx *xhci_alloc_container_ctx(struct xhci_hcd *xhci,
 						    int type, gfp_t flags)
 {
 	struct xhci_container_ctx *ctx = kzalloc(sizeof(*ctx), flags);
+
 	if (!ctx)
 		return NULL;
 
-	BUG_ON((type != XHCI_CTX_TYPE_DEVICE) && (type != XHCI_CTX_TYPE_INPUT));
+	BUG_ON((type != (XHCI_CTX_TYPE_DEVICE)) && (type != (XHCI_CTX_TYPE_INPUT)));
 	ctx->type = type;
 	ctx->size = HCC_64BYTE_CONTEXT(xhci->hcc_params) ? 2048 : 1024;
-	if (type == XHCI_CTX_TYPE_INPUT)
+	if (type == (XHCI_CTX_TYPE_INPUT))
 		ctx->size += CTX_SIZE(xhci->hcc_params);
 
 	ctx->bytes = dma_pool_alloc(xhci->device_pool, flags, &ctx->dma);
@@ -221,7 +222,7 @@ void xhci_free_container_ctx(struct xhci_hcd *xhci,
 struct xhci_input_control_ctx *xhci_get_input_control_ctx(struct xhci_hcd *xhci,
 					      struct xhci_container_ctx *ctx)
 {
-	BUG_ON(ctx->type != XHCI_CTX_TYPE_INPUT);
+	BUG_ON(ctx->type != (XHCI_CTX_TYPE_INPUT));
 	return (struct xhci_input_control_ctx *)ctx->bytes;
 }
 
@@ -241,7 +242,7 @@ struct xhci_ep_ctx *xhci_get_ep_ctx(struct xhci_hcd *xhci,
 {
 	/* increment ep index by offset of start of ep ctx array */
 	ep_index++;
-	if (ctx->type == XHCI_CTX_TYPE_INPUT)
+	if (ctx->type == (XHCI_CTX_TYPE_INPUT))
 		ep_index++;
 
 	return (struct xhci_ep_ctx *)
@@ -302,7 +303,7 @@ int xhci_alloc_virt_device(struct xhci_hcd *xhci, int slot_id,
 			(unsigned long long)dev->out_ctx->dma);
 
 	/* Allocate the (input) device context for address device command */
-	dev->in_ctx = xhci_alloc_container_ctx(xhci, XHCI_CTX_TYPE_INPUT, flags);
+	dev->in_ctx = xhci_alloc_container_ctx(xhci, (XHCI_CTX_TYPE_INPUT), flags);
 	if (!dev->in_ctx)
 		goto fail;
 
@@ -322,11 +323,11 @@ int xhci_alloc_virt_device(struct xhci_hcd *xhci, int slot_id,
 	INIT_LIST_HEAD(&dev->cmd_list);
 
 	/* Point to output device context in dcbaa. */
-	xhci->dcbaa->dev_context_ptrs[slot_id] = dev->out_ctx->dma;
+	xhci->dcbaa->dev_context_ptrs[slot_id] = SWAP64(dev->out_ctx->dma);
 	xhci_dbg(xhci, "Set slot id %d dcbaa entry %p to 0x%llx\n",
 			slot_id,
 			&xhci->dcbaa->dev_context_ptrs[slot_id],
-			(unsigned long long) xhci->dcbaa->dev_context_ptrs[slot_id]);
+			SWAP64((unsigned long long) xhci->dcbaa->dev_context_ptrs[slot_id]));
 
 	return 1;
 fail:
@@ -355,24 +356,24 @@ int xhci_setup_addressable_virt_dev(struct xhci_hcd *xhci, struct usb_device *ud
 	slot_ctx = xhci_get_slot_ctx(xhci, dev->in_ctx);
 
 	/* 2) New slot context and endpoint 0 context are valid*/
-	ctrl_ctx->add_flags = SLOT_FLAG | EP0_FLAG;
+	ctrl_ctx->add_flags = SWAP32(SLOT_FLAG | EP0_FLAG);
 
 	/* 3) Only the control endpoint is valid - one endpoint context */
-	slot_ctx->dev_info |= LAST_CTX(1);
+	slot_ctx->dev_info |= SWAP32(LAST_CTX(1));
 
-	slot_ctx->dev_info |= (u32) udev->route;
+	slot_ctx->dev_info |= SWAP32((u32) udev->route);
 	switch (udev->speed) {
 	case USB_SPEED_SUPER:
-		slot_ctx->dev_info |= (u32) SLOT_SPEED_SS;
+		slot_ctx->dev_info |= SWAP32((u32) SLOT_SPEED_SS);
 		break;
 	case USB_SPEED_HIGH:
-		slot_ctx->dev_info |= (u32) SLOT_SPEED_HS;
+		slot_ctx->dev_info |= SWAP32((u32) SLOT_SPEED_HS);
 		break;
 	case USB_SPEED_FULL:
-		slot_ctx->dev_info |= (u32) SLOT_SPEED_FS;
+		slot_ctx->dev_info |= SWAP32((u32) SLOT_SPEED_FS);
 		break;
 	case USB_SPEED_LOW:
-		slot_ctx->dev_info |= (u32) SLOT_SPEED_LS;
+		slot_ctx->dev_info |= SWAP32((u32) SLOT_SPEED_LS);
 		break;
 	case USB_SPEED_VARIABLE:
 		xhci_dbg(xhci, "FIXME xHCI doesn't support wireless speeds\n");
@@ -386,37 +387,37 @@ int xhci_setup_addressable_virt_dev(struct xhci_hcd *xhci, struct usb_device *ud
 	for (top_dev = udev; top_dev->parent && top_dev->parent->parent;
 			top_dev = top_dev->parent)
 		/* Found device below root hub */;
-	slot_ctx->dev_info2 |= (u32) ROOT_HUB_PORT(top_dev->portnum);
+	slot_ctx->dev_info2 |= SWAP32((u32) ROOT_HUB_PORT(top_dev->portnum));
 	xhci_dbg(xhci, "Set root hub portnum to %d\n", top_dev->portnum);
 
 	/* Is this a LS/FS device under a HS hub? */
 	if ((udev->speed == USB_SPEED_LOW || udev->speed == USB_SPEED_FULL) &&
 			udev->tt) {
-		slot_ctx->tt_info = udev->tt->hub->slot_id;
-		slot_ctx->tt_info |= udev->ttport << 8;
+		slot_ctx->tt_info  = SWAP32(udev->tt->hub->slot_id);
+		slot_ctx->tt_info |= SWAP32(udev->ttport << 8);
 		if (udev->tt->multi)
-			slot_ctx->dev_info |= DEV_MTT;
+			slot_ctx->dev_info |= SWAP32(DEV_MTT);
 	}
 	xhci_dbg(xhci, "udev->tt = %p\n", udev->tt);
 	xhci_dbg(xhci, "udev->ttport = 0x%x\n", udev->ttport);
 
 	/* Step 4 - ring already allocated */
 	/* Step 5 */
-	ep0_ctx->ep_info2 = EP_TYPE(CTRL_EP);
+	ep0_ctx->ep_info2 = SWAP32(EP_TYPE(CTRL_EP));
 	/*
 	 * XXX: Not sure about wireless USB devices.
 	 */
 	switch (udev->speed) {
 	case USB_SPEED_SUPER:
-		ep0_ctx->ep_info2 |= MAX_PACKET(512);
+		ep0_ctx->ep_info2 |= SWAP32(MAX_PACKET(512));
 		break;
 	case USB_SPEED_HIGH:
 	/* USB core guesses at a 64-byte max packet first for FS devices */
 	case USB_SPEED_FULL:
-		ep0_ctx->ep_info2 |= MAX_PACKET(64);
+		ep0_ctx->ep_info2 |= SWAP32(MAX_PACKET(64));
 		break;
 	case USB_SPEED_LOW:
-		ep0_ctx->ep_info2 |= MAX_PACKET(8);
+		ep0_ctx->ep_info2 |= SWAP32(MAX_PACKET(8));
 		break;
 	case USB_SPEED_VARIABLE:
 		xhci_dbg(xhci, "FIXME xHCI doesn't support wireless speeds\n");
@@ -427,12 +428,13 @@ int xhci_setup_addressable_virt_dev(struct xhci_hcd *xhci, struct usb_device *ud
 		BUG();
 	}
 	/* EP 0 can handle "burst" sizes of 1, so Max Burst Size field is 0 */
-	ep0_ctx->ep_info2 |= MAX_BURST(0);
-	ep0_ctx->ep_info2 |= ERROR_COUNT(3);
+	ep0_ctx->ep_info2 |= SWAP32(MAX_BURST(0));
+	ep0_ctx->ep_info2 |= SWAP32(ERROR_COUNT(3));
+
 
 	ep0_ctx->deq =
-		dev->eps[0].ring->first_seg->dma;
-	ep0_ctx->deq |= dev->eps[0].ring->cycle_state;
+		SWAP64(dev->eps[0].ring->first_seg->dma);
+	ep0_ctx->deq |= SWAP64(dev->eps[0].ring->cycle_state);
 
 	/* Steps 7 and 8 were done in xhci_alloc_virt_device() */
 
@@ -496,24 +498,11 @@ static inline unsigned int xhci_get_endpoint_interval(struct usb_device *udev,
 	return EP_INTERVAL(interval);
 }
 
-/* The "Mult" field in the endpoint context is only set for SuperSpeed devices.
- * High speed endpoint descriptors can define "the number of additional
- * transaction opportunities per microframe", but that goes in the Max Burst
- * endpoint context field.
- */
-static inline u32 xhci_get_endpoint_mult(struct usb_device *udev,
-		struct usb_host_endpoint *ep)
-{
-	if (udev->speed != USB_SPEED_SUPER || !ep->ss_ep_comp)
-		return 0;
-	return ep->ss_ep_comp->desc.bmAttributes;
-}
-
 static inline u32 xhci_get_endpoint_type(struct usb_device *udev,
 		struct usb_host_endpoint *ep)
 {
 	int in;
-	u32 type;
+	u32 type=0;
 
 	in = usb_endpoint_dir_in(&ep->desc);
 	if (usb_endpoint_xfer_control(&ep->desc)) {
@@ -539,36 +528,6 @@ static inline u32 xhci_get_endpoint_type(struct usb_device *udev,
 	return type;
 }
 
-/* Return the maximum endpoint service interval time (ESIT) payload.
- * Basically, this is the maxpacket size, multiplied by the burst size
- * and mult size.
- */
-static inline u32 xhci_get_max_esit_payload(struct xhci_hcd *xhci,
-		struct usb_device *udev,
-		struct usb_host_endpoint *ep)
-{
-	int max_burst;
-	int max_packet;
-
-	/* Only applies for interrupt or isochronous endpoints */
-	if (usb_endpoint_xfer_control(&ep->desc) ||
-			usb_endpoint_xfer_bulk(&ep->desc))
-		return 0;
-
-	if (udev->speed == USB_SPEED_SUPER) {
-		if (ep->ss_ep_comp)
-			return ep->ss_ep_comp->desc.wBytesPerInterval;
-		xhci_warn(xhci, "WARN no SS endpoint companion descriptor.\n");
-		/* Assume no bursts, no multiple opportunities to send. */
-		return ep->desc.wMaxPacketSize;
-	}
-
-	max_packet = ep->desc.wMaxPacketSize & 0x3ff;
-	max_burst = (ep->desc.wMaxPacketSize & 0x1800) >> 11;
-	/* A 0 in max burst means 1 transfer per ESIT */
-	return max_packet * (max_burst + 1);
-}
-
 int xhci_endpoint_init(struct xhci_hcd *xhci,
 		struct xhci_virt_device *virt_dev,
 		struct usb_device *udev,
@@ -580,7 +539,6 @@ int xhci_endpoint_init(struct xhci_hcd *xhci,
 	struct xhci_ring *ep_ring;
 	unsigned int max_packet;
 	unsigned int max_burst;
-	u32 max_esit_payload;
 
 	ep_index = xhci_get_endpoint_index(&ep->desc);
 	ep_ctx = xhci_get_ep_ctx(xhci, virt_dev->in_ctx, ep_index);
@@ -591,10 +549,9 @@ int xhci_endpoint_init(struct xhci_hcd *xhci,
 	if (!virt_dev->eps[ep_index].new_ring)
 		return -ENOMEM;
 	ep_ring = virt_dev->eps[ep_index].new_ring;
-	ep_ctx->deq = ep_ring->first_seg->dma | ep_ring->cycle_state;
+	ep_ctx->deq = SWAP64(ep_ring->first_seg->dma | ep_ring->cycle_state);
 
-	ep_ctx->ep_info = xhci_get_endpoint_interval(udev, ep);
-	ep_ctx->ep_info |= EP_MULT(xhci_get_endpoint_mult(udev, ep));
+	ep_ctx->ep_info = SWAP32(xhci_get_endpoint_interval(udev, ep));
 
 	/* FIXME dig Mult and streams info out of ep companion desc */
 
@@ -602,17 +559,17 @@ int xhci_endpoint_init(struct xhci_hcd *xhci,
 	 * error count = 0 means infinite retries.
 	 */
 	if (!usb_endpoint_xfer_isoc(&ep->desc))
-		ep_ctx->ep_info2 = ERROR_COUNT(3);
+		ep_ctx->ep_info2 = SWAP32(ERROR_COUNT(3));
 	else
-		ep_ctx->ep_info2 = ERROR_COUNT(1);
+		ep_ctx->ep_info2 = SWAP32(ERROR_COUNT(1));
 
-	ep_ctx->ep_info2 |= xhci_get_endpoint_type(udev, ep);
+	ep_ctx->ep_info2 |= SWAP32(xhci_get_endpoint_type(udev, ep));
 
 	/* Set the max packet size and max burst */
 	switch (udev->speed) {
 	case USB_SPEED_SUPER:
-		max_packet = ep->desc.wMaxPacketSize;
-		ep_ctx->ep_info2 |= MAX_PACKET(max_packet);
+		max_packet = SWAP16(ep->desc.wMaxPacketSize);
+		ep_ctx->ep_info2 |= SWAP32(MAX_PACKET(max_packet));
 		/* dig out max burst from ep companion desc */
 		if (!ep->ss_ep_comp) {
 			xhci_warn(xhci, "WARN no SS endpoint companion descriptor.\n");
@@ -620,7 +577,7 @@ int xhci_endpoint_init(struct xhci_hcd *xhci,
 		} else {
 			max_packet = ep->ss_ep_comp->desc.bMaxBurst;
 		}
-		ep_ctx->ep_info2 |= MAX_BURST(max_packet);
+		ep_ctx->ep_info2 |= SWAP32(MAX_BURST(max_packet));
 		break;
 	case USB_SPEED_HIGH:
 		/* bits 11:12 specify the number of additional transaction
@@ -628,38 +585,18 @@ int xhci_endpoint_init(struct xhci_hcd *xhci,
 		 */
 		if (usb_endpoint_xfer_isoc(&ep->desc) ||
 				usb_endpoint_xfer_int(&ep->desc)) {
-			max_burst = (ep->desc.wMaxPacketSize & 0x1800) >> 11;
-			ep_ctx->ep_info2 |= MAX_BURST(max_burst);
+			max_burst = (SWAP16(ep->desc.wMaxPacketSize) & 0x1800) >> 11;
+			ep_ctx->ep_info2 |= SWAP32(MAX_BURST(max_burst));
 		}
 		/* Fall through */
 	case USB_SPEED_FULL:
 	case USB_SPEED_LOW:
-		max_packet = ep->desc.wMaxPacketSize & 0x3ff;
-		ep_ctx->ep_info2 |= MAX_PACKET(max_packet);
+		max_packet = SWAP16(ep->desc.wMaxPacketSize) & 0x3ff;
+		ep_ctx->ep_info2 |= SWAP32(MAX_PACKET(max_packet));
 		break;
 	default:
 		BUG();
 	}
-	max_esit_payload = xhci_get_max_esit_payload(xhci, udev, ep);
-	ep_ctx->tx_info = MAX_ESIT_PAYLOAD_FOR_EP(max_esit_payload);
-
-	/*
-	 * XXX no idea how to calculate the average TRB buffer length for bulk
-	 * endpoints, as the driver gives us no clue how big each scatter gather
-	 * list entry (or buffer) is going to be.
-	 *
-	 * For isochronous and interrupt endpoints, we set it to the max
-	 * available, until we have new API in the USB core to allow drivers to
-	 * declare how much bandwidth they actually need.
-	 *
-	 * Normally, it would be calculated by taking the total of the buffer
-	 * lengths in the TD and then dividing by the number of TRBs in a TD,
-	 * including link TRBs, No-op TRBs, and Event data TRBs.  Since we don't
-	 * use Event Data TRBs, and we don't chain in a link TRB on short
-	 * transfers, we're basically dividing by 1.
-	 */
-	ep_ctx->tx_info |= AVG_TRB_LENGTH_FOR_EP(max_esit_payload);
-
 	/* FIXME Debug endpoint context */
 	return 0;
 }
@@ -758,7 +695,7 @@ static int scratchpad_alloc(struct xhci_hcd *xhci, gfp_t flags)
 	if (!xhci->scratchpad->sp_dma_buffers)
 		goto fail_sp4;
 
-	xhci->dcbaa->dev_context_ptrs[0] = xhci->scratchpad->sp_dma;
+	xhci->dcbaa->dev_context_ptrs[0] = SWAP64(xhci->scratchpad->sp_dma);
 	for (i = 0; i < num_sp; i++) {
 		dma_addr_t dma;
 		void *buf = pci_alloc_consistent(to_pci_dev(dev),
@@ -766,7 +703,7 @@ static int scratchpad_alloc(struct xhci_hcd *xhci, gfp_t flags)
 		if (!buf)
 			goto fail_sp5;
 
-		xhci->scratchpad->sp_array[i] = dma;
+		xhci->scratchpad->sp_array[i] = SWAP64(dma);
 		xhci->scratchpad->sp_buffers[i] = buf;
 		xhci->scratchpad->sp_dma_buffers[i] = dma;
 	}
@@ -832,7 +769,7 @@ struct xhci_command *xhci_alloc_command(struct xhci_hcd *xhci,
 		return NULL;
 
 	command->in_ctx =
-		xhci_alloc_container_ctx(xhci, XHCI_CTX_TYPE_INPUT, mem_flags);
+		xhci_alloc_container_ctx(xhci, (XHCI_CTX_TYPE_INPUT), mem_flags);
 	if (!command->in_ctx)
 		return NULL;
 
@@ -1035,8 +972,8 @@ int xhci_mem_init(struct xhci_hcd *xhci, gfp_t flags)
 	/* set ring base address and size for each segment table entry */
 	for (val = 0, seg = xhci->event_ring->first_seg; val < ERST_NUM_SEGS; val++) {
 		struct xhci_erst_entry *entry = &xhci->erst.entries[val];
-		entry->seg_addr = seg->dma;
-		entry->seg_size = TRBS_PER_SEGMENT;
+		entry->seg_addr = SWAP64(seg->dma);
+		entry->seg_size = SWAP32(TRBS_PER_SEGMENT);
 		entry->rsvd = 0;
 		seg = seg->next;
 	}

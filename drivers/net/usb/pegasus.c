@@ -42,6 +42,83 @@
 #include <asm/uaccess.h>
 #include "pegasus.h"
 
+
+
+// ctc
+#if 0 //defined(CONFIG_IFX_PPA_API) || defined(CONFIG_IFX_PPA_API_MODULE)
+ #include <net/ifx_ppa_api.h>
+ #include <net/ifx_ppa_hook.h>
+
+ #define PEGASUS_PPA_ENABLE
+
+ #if defined(CONFIG_IFX_PPA_API_DIRECTPATH) || defined(CONFIG_IFX_PPA_API_INDIRECTPATH)
+  #ifdef PEGASUS_PPA_ENABLE
+/* wrapper fxn registered with PPA Directpath */
+static int ifx_eth_start_xmit (struct net_device *rx_dev, struct net_device *tx_dev, struct sk_buff *skb, int len)
+{
+	int ret = -1;
+	if (rx_dev != NULL) {
+		skb->protocol = eth_type_trans(skb, rx_dev);
+		ret = netif_receive_skb(skb);
+	} else {
+		skb->dev = tx_dev;
+		ret = dev_queue_xmit(skb);
+		if (ret < 0) {
+			printk(KERN_ERR "%s,%s,%d --- dev_queue_xmit failed, ret = %d\n", __FILE__, __FUNCTION__, __LINE__, ret);
+		}
+	}
+	return ret;
+}
+
+static int ifx_pegasus_directpath_register(pegasus_t *pegasus)
+{
+	PPA_DIRECTPATH_CB	*p_directpath_cb = NULL;
+	int ret = -1;
+
+	if (ppa_hook_directpath_register_dev_fn && (pegasus->g_if_id == 0)) {
+		p_directpath_cb = (PPA_DIRECTPATH_CB *) kmalloc (sizeof(PPA_DIRECTPATH_CB), GFP_ATOMIC);
+		if (p_directpath_cb == NULL) {
+			printk(KERN_ERR "%s -- kmalloc failed for p_directpath_cb!\n", __FUNCTION__);
+			ret = -1;
+		} else {
+			/* register callback */
+			p_directpath_cb->rx_fn       = ifx_eth_start_xmit;
+			p_directpath_cb->stop_tx_fn  = NULL;
+			p_directpath_cb->start_tx_fn = NULL;
+			if(ppa_hook_directpath_register_dev_fn(&(pegasus->g_if_id), pegasus->net, p_directpath_cb, PPA_F_DIRECTPATH_ETH_IF|PPA_F_DIRECTPATH_REGISTER)) {
+				printk(KERN_ERR "%s -- ppa_directpath_register_dev_fn failed!\n", __FUNCTION__);
+				ret = -1;
+			} else {
+				printk(KERN_ERR "%s -- ppa_directpath_register_dev_fn done, g_if_id=%u!\n", __FUNCTION__, pegasus->g_if_id);
+				ret = 0;
+			}
+			kfree(p_directpath_cb);
+		}
+	}
+	return ret;
+}
+
+static int ifx_pegasus_directpath_deregister(pegasus_t *pegasus)
+{
+	if (ppa_hook_directpath_register_dev_fn && (pegasus->g_if_id != 0)) {
+		if(!(ppa_hook_directpath_register_dev_fn(&(pegasus->g_if_id), NULL, NULL, 0))) {
+			printk(KERN_ERR "deregister ppa_directpath_register_dev_fn[%u] failed!\n", pegasus->g_if_id);
+			return -1;
+		} else {
+			printk(KERN_ERR "deregister ppa_directpath_register_dev_fn[%u] done!\n", pegasus->g_if_id);
+			pegasus->g_if_id=0;
+		}
+	}
+	return 0;
+}
+
+  #endif	// PEGASUS_PPA_ENABLE
+ #endif		// defined(CONFIG_IFX_PPA_API_DIRECTPATH) || defined(CONFIG_IFX_PPA_API_INDIRECTPATH)
+#endif		// defined(CONFIG_IFX_PPA_API) || defined(CONFIG_IFX_PPA_API_MODULE)
+
+// end of ctc
+
+
 /*
  * Version Information
  */
@@ -591,7 +668,14 @@ static void fill_skb_pool(pegasus_t * pegasus)
 		 */
 		if (pegasus->rx_pool[i] == NULL)
 			return;
+	  #if 1 //ctc
 		skb_reserve(pegasus->rx_pool[i], 2);
+	  #else
+		pegasus->rx_pool[i]->dev = pegasus->net;
+	   #if 0	// howard no shift
+		skb_reserve(pegasus->rx_pool[i], 2);
+	   #endif
+	  #endif
 	}
 }
 
@@ -630,6 +714,11 @@ static void read_bulk_callback(struct urb *urb)
 	int status = urb->status;
 	u8 *buf = urb->transfer_buffer;
 	__u16 pkt_len;
+
+  #ifdef PEGASUS_PPA_ENABLE //ctc
+	int 		ret = -1;
+	unsigned int ppa_flags = 0; /* reserved for now */
+  #endif
 
 	if (!pegasus)
 		return;
@@ -704,8 +793,13 @@ static void read_bulk_callback(struct urb *urb)
 	 * so we go ahead and pass up the packet.
 	 */
 	skb_put(pegasus->rx_skb, pkt_len);
+  #ifdef PEGASUS_PPA_ENABLE //ctc
+	if (ppa_hook_directpath_send_fn && (pegasus->g_if_id != 0))
+		ret = ppa_hook_directpath_send_fn(pegasus->g_if_id, pegasus->rx_skb, pkt_len, ppa_flags);
+  #else
 	pegasus->rx_skb->protocol = eth_type_trans(pegasus->rx_skb, net);
 	netif_rx(pegasus->rx_skb);
+  #endif
 	pegasus->stats.rx_packets++;
 	pegasus->stats.rx_bytes += pkt_len;
 
@@ -1365,7 +1459,14 @@ static int pegasus_probe(struct usb_interface *intf,
 		goto out;
 	}
 
+  #if 1 //ctc
+	strcpy( net->name, "usbeth%d" ); // rename ethN as usbethN
+  #endif
+
 	pegasus = netdev_priv(net);
+  #ifdef PEGASUS_PPA_ENABLE //ctc
+	pegasus->g_if_id = 0;
+  #endif
 	pegasus->dev_index = dev_index;
 	init_waitqueue_head(&pegasus->ctrl_wait);
 
@@ -1423,6 +1524,10 @@ static int pegasus_probe(struct usb_interface *intf,
 	queue_delayed_work(pegasus_workqueue, &pegasus->carrier_check,
 				CARRIER_CHECK_DELAY);
 
+  #ifdef PEGASUS_PPA_ENABLE //ctc
+	ifx_pegasus_directpath_register(pegasus);
+  #endif
+
 	dev_info(&intf->dev, "%s, %s, %pM\n",
 		 net->name,
 		 usb_dev_id[dev_index].name,
@@ -1453,6 +1558,9 @@ static void pegasus_disconnect(struct usb_interface *intf)
 	}
 
 	pegasus->flags |= PEGASUS_UNPLUG;
+  #ifdef PEGASUS_PPA_ENABLE //ctc
+	ifx_pegasus_directpath_deregister(pegasus);
+  #endif
 	cancel_delayed_work(&pegasus->carrier_check);
 	unregister_netdev(pegasus->net);
 	usb_put_dev(interface_to_usbdev(intf));

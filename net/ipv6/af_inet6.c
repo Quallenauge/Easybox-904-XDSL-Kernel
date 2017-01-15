@@ -1145,6 +1145,8 @@ static int __init inet6_init(void)
 		goto proc_misc6_fail;
 	if (if6_proc_init())
 		goto proc_if6_fail;
+	if (flags6_proc_init())
+		goto proc_flags6_fail;		
 #endif
 	err = ip6_route_init();
 	if (err)
@@ -1213,6 +1215,8 @@ ip6_flowlabel_fail:
 ip6_route_fail:
 #ifdef CONFIG_PROC_FS
 	if6_proc_exit();
+proc_flags6_fail:
+	flags6_proc_exit();
 proc_if6_fail:
 	ipv6_misc_proc_exit();
 proc_misc6_fail:

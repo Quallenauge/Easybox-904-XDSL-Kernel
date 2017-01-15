@@ -16,7 +16,9 @@
  * documentation. Do not change them.
  */
 
+#ifndef BUILD_FROM_LTQ_APPS
 #include <linux/compiler.h>
+#endif
 #include <linux/atmapi.h>
 #include <linux/atmsap.h>
 #include <linux/atmioc.h>
@@ -130,6 +132,12 @@
 #define ATM_ABR		4
 #define ATM_ANYCLASS	5		/* compatible with everything */
 
+#define ATM_VBR_NRT     ATM_VBR
+#define ATM_VBR_RT      6
+#define ATM_UBR_PLUS    7
+#define ATM_GFR         8
+
+
 #define ATM_MAX_PCR	-1		/* maximum available PCR */
 
 struct atm_trafprm {
@@ -139,6 +147,11 @@ struct atm_trafprm {
 	int		min_pcr;	/* minimum PCR in cells per second */
 	int		max_cdv;	/* maximum CDV in microseconds */
 	int		max_sdu;	/* maximum SDU in bytes */
+        /* extra params for VBR(NRT-VBR) and RT-VBR */
+        int             scr;            /* sustained rate in cells per second */
+        int             mbs;            /* maximum burst size (MBS) in cells */
+        int             cdv;            /* Cell delay varition */
+
         /* extra params for ABR */
         unsigned int 	icr;         	/* Initial Cell Rate (24-bit) */
         unsigned int	tbe;		/* Transient Buffer Exposure (24-bit) */ 
@@ -230,13 +243,13 @@ static __inline__ int atmpvc_addr_in_use(struct sockaddr_atmpvc addr)
  * Some stuff for linux/sockios.h
  */
 
+#ifdef __KERNEL__
 struct atmif_sioc {
 	int number;
 	int length;
 	void __user *arg;
 };
 
-#ifdef __KERNEL__
 #ifdef CONFIG_COMPAT
 #include <linux/compat.h>
 struct compat_atmif_sioc {

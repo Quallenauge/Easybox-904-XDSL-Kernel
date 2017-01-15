@@ -482,4 +482,6 @@ config MTD_NAND_W90P910
 	  This enables the driver for the NAND Flash on evaluation board based
 	  on w90p910.
 
+source "drivers/mtd/nand/Kconfig.ifx"
+
 endif # MTD_NAND

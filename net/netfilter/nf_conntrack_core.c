@@ -45,6 +45,11 @@
 #include <net/netfilter/nf_nat.h>
 #include <net/netfilter/nf_nat_core.h>
 
+#if defined(CONFIG_IFX_PPA_API) || defined(CONFIG_IFX_PPA_API_MODULE)
+  #include <net/ifx_ppa_api.h>
+  static atomic_t g_ppa_force_timeout = {0};
+#endif
+
 #define NF_CONNTRACK_VERSION	"0.5.0"
 
 int (*nfnetlink_parse_nat_setup_hook)(struct nf_conn *ct,
@@ -166,6 +171,12 @@ static void
 clean_from_lists(struct nf_conn *ct)
 {
 	pr_debug("clean_from_lists(%p)\n", ct);
+#if defined(CONFIG_IFX_PPA_API) || defined(CONFIG_IFX_PPA_API_MODULE)
+    if ( ppa_hook_session_del_fn != NULL )
+    {
+        ppa_hook_session_del_fn(ct, PPA_F_SESSION_ORG_DIR | PPA_F_SESSION_REPLY_DIR);
+    }
+#endif
 	hlist_nulls_del_rcu(&ct->tuplehash[IP_CT_DIR_ORIGINAL].hnnode);
 	hlist_nulls_del_rcu(&ct->tuplehash[IP_CT_DIR_REPLY].hnnode);
 
@@ -184,6 +195,12 @@ destroy_conntrack(struct nf_conntrack *nfct)
 	NF_CT_ASSERT(atomic_read(&nfct->use) == 0);
 	NF_CT_ASSERT(!timer_pending(&ct->timeout));
 
+#if defined(CONFIG_IFX_PPA_API) || defined(CONFIG_IFX_PPA_API_MODULE)
+    if ( ppa_hook_session_del_fn != NULL )
+    {
+        ppa_hook_session_del_fn(ct, PPA_F_SESSION_ORG_DIR | PPA_F_SESSION_REPLY_DIR);
+    }
+#endif
 	/* To make sure we don't get any weird locking issues here:
 	 * destroy_conntrack() MUST NOT be called with a write lock
 	 * to nf_conntrack_lock!!! -HW */
@@ -200,6 +217,14 @@ destroy_conntrack(struct nf_conntrack *nfct)
 	 * before connection is in the list, so we need to clean here,
 	 * too. */
 	nf_ct_remove_expectations(ct);
+
+	#if defined(CONFIG_NETFILTER_XT_MATCH_LAYER7) || defined(CONFIG_NETFILTER_XT_MATCH_LAYER7_MODULE)
+	if(ct->layer7.app_proto)
+		kfree(ct->layer7.app_proto);
+	if(ct->layer7.app_data)
+	kfree(ct->layer7.app_data);
+	#endif
+
 
 	/* We overload first tuple to link into unconfirmed list. */
 	if (!nf_ct_is_confirmed(ct)) {
@@ -271,6 +296,28 @@ EXPORT_SYMBOL_GPL(nf_ct_insert_dying_list);
 static void death_by_timeout(unsigned long ul_conntrack)
 {
 	struct nf_conn *ct = (void *)ul_conntrack;
+
+#if defined(CONFIG_IFX_PPA_API) || defined(CONFIG_IFX_PPA_API_MODULE)
+      /* if this function is called from within a timer interrupt then the timer
+         has actually expired. We need to make this distinction since this function 
+         is also called to remove conntrack's for various reasons other than inactivity
+         timeout */
+         
+    if ( !atomic_read(&g_ppa_force_timeout) && ppa_hook_inactivity_status_fn != NULL)
+    {
+        if ( ppa_hook_inactivity_status_fn((PPA_U_SESSION *)ct) == IFX_PPA_HIT )
+        {
+            nf_ct_refresh(ct, 0, 60 * HZ); //to check again after default seconds
+
+            if( !timer_pending(&ct->timeout) )
+            {
+                ct->timeout.expires = jiffies + 60 * HZ;
+                add_timer(&ct->timeout);
+            }
+            return;
+        }
+    }
+#endif
 
 	if (!test_bit(IPS_DYING_BIT, &ct->status) &&
 	    unlikely(nf_conntrack_event(IPCT_DESTROY, ct) < 0)) {
@@ -527,13 +574,94 @@ static noinline int early_drop(struct net *net, unsigned int hash)
 		return dropped;
 
 	if (del_timer(&ct->timeout)) {
+#if defined(CONFIG_IFX_PPA_API) || defined(CONFIG_IFX_PPA_API_MODULE)
+        atomic_inc(&g_ppa_force_timeout);
+#endif
 		death_by_timeout((unsigned long)ct);
+#if defined(CONFIG_IFX_PPA_API) || defined(CONFIG_IFX_PPA_API_MODULE)
+        atomic_dec(&g_ppa_force_timeout);
+#endif
+
 		dropped = 1;
 		NF_CT_STAT_INC_ATOMIC(net, early_drop);
 	}
 	nf_ct_put(ct);
 	return dropped;
 }
+
+#define LTQ_IP_CONNTRACK_REPLACEMENT
+
+#undef LTQ_IP_CONNTRACK_REPLACEMENT_DEBUG
+
+#ifdef LTQ_IP_CONNTRACK_REPLACEMENT
+static inline int drop_decision(void)
+{ /*return value: 1-drop currnet nf_conn, 0-not drop current nf_conntrack */
+
+	        /*Later we need to optimize here, like how to keep sip ALG,
+		 * voice RTP and so on */
+	        return 1;
+}
+
+
+//static int FindReplacement( const struct nf_conntrack_tuple *tuple, const struct nf_conntrack_l3proto *protoco)
+/* Enhance : need to traverse reverse in the list , right now implementation is
+ * similiar as early_drop*/
+static int FindReplacement(struct net *net)
+{
+	/* Traverse backwards: gives us oldest, which is roughly LRU */
+	struct nf_conntrack_tuple_hash *h;
+	int dropped = 0, i;
+	struct hlist_nulls_node *n;
+	static unsigned int hash_next=0 ; //save for next replacement
+	struct nf_conn *ct = NULL, *tmp;
+
+#ifdef LTQ_IP_CONNTRACK_REPLACEMENT_DEBUG
+        printk(KERN_WARNING "iptables full:ip_conntrack_max(%d)_ip_conntrack_count(%d)_hash_next(%d)\n", nf_conntrack_max, atomic_read(&net->ct.count),hash_next );
+#endif
+	rcu_read_lock();
+        
+	for (i=0; i < net->ct.htable_size; i++)  /*control loop times*/ {
+                hash_next =  (hash_next + 1) % net->ct.htable_size;
+		hlist_nulls_for_each_entry_rcu(h, n, &net->ct.hash[hash_next],hnnode)
+		{
+			tmp = nf_ct_tuplehash_to_ctrack(h);		
+                	if (drop_decision() && (atomic_read(&tmp->ct_general.use) == 1)) {
+					ct = tmp;
+                               		 break;
+                	}
+	      }
+        }
+
+	rcu_read_unlock();
+
+        if (!ct) {
+#ifdef LTQ_IP_CONNTRACK_REPLACEMENT_DEBUG
+                printk(KERN_WARNING "Not found replacemnet ???\n");
+#endif
+                return dropped;
+        }
+#ifdef LTQ_IP_CONNTRACK_REPLACEMENT_DEBUG
+        printk(KERN_WARNING "replace ok:%d\n", hash_next);
+#endif
+        if (del_timer(&ct->timeout)) {
+#if defined(CONFIG_IFX_PPA_API) || defined(CONFIG_IFX_PPA_API_MODULE)                                                                                 
+                atomic_inc(&g_ppa_force_timeout);                                                                                                     
+#endif
+
+                death_by_timeout((unsigned long)ct);
+
+#if defined(CONFIG_IFX_PPA_API) || defined(CONFIG_IFX_PPA_API_MODULE)                                                                                 
+                atomic_dec(&g_ppa_force_timeout);                                                                                                     
+#endif 
+		dropped = 1;
+		NF_CT_STAT_INC_ATOMIC(net, early_drop);
+        }
+	nf_ct_put(ct);
+        return dropped;
+}
+
+#endif
+
 
 struct nf_conn *nf_conntrack_alloc(struct net *net,
 				   const struct nf_conntrack_tuple *orig,
@@ -555,6 +683,15 @@ struct nf_conn *nf_conntrack_alloc(struct net *net,
 	    unlikely(atomic_read(&net->ct.count) > nf_conntrack_max)) {
 		unsigned int hash = hash_conntrack(net, orig);
 		if (!early_drop(net, hash)) {
+#ifdef LTQ_IP_CONNTRACK_REPLACEMENT
+		if( FindReplacement(net) )
+		{
+#ifdef LTQ_IP_CONNTRACK_REPLACEMENT_DEBUG
+			printk(KERN_WARNING "inside nf_conntrack_alloc ok\n");
+#endif
+			goto SUCCESS_REPLACEMENT;
+		}
+#endif
 			atomic_dec(&net->ct.count);
 			if (net_ratelimit())
 				printk(KERN_WARNING
@@ -564,6 +701,9 @@ struct nf_conn *nf_conntrack_alloc(struct net *net,
 		}
 	}
 
+#ifdef LTQ_IP_CONNTRACK_REPLACEMENT
+SUCCESS_REPLACEMENT:
+#endif
 	/*
 	 * Do not use kmem_cache_zalloc(), as this cache uses
 	 * SLAB_DESTROY_BY_RCU.
@@ -823,6 +963,18 @@ nf_conntrack_in(struct net *net, u_int8_t pf, unsigned int hooknum,
 	if (set_reply && !test_and_set_bit(IPS_SEEN_REPLY_BIT, &ct->status))
 		nf_conntrack_event_cache(IPCT_STATUS, ct);
 
+#if defined(CONFIG_IFX_PPA_API) || defined(CONFIG_IFX_PPA_API_MODULE)
+        if ( ret == NF_ACCEPT && ct != NULL && ppa_hook_session_add_fn != NULL )
+        {
+            uint32_t flags;
+    
+            flags = PPA_F_BEFORE_NAT_TRANSFORM;
+            flags |= CTINFO2DIR(ctinfo) == IP_CT_DIR_ORIGINAL ? PPA_F_SESSION_ORG_DIR : PPA_F_SESSION_REPLY_DIR;
+    
+            ppa_hook_session_add_fn(skb, ct, flags);
+        }
+#endif
+
 	return ret;
 }
 EXPORT_SYMBOL_GPL(nf_conntrack_in);
@@ -905,6 +1057,14 @@ acct:
 			spin_unlock_bh(&ct->lock);
 		}
 	}
+
+#if defined(CONFIG_IFX_PPA_API) || defined(CONFIG_IFX_PPA_API_MODULE)
+    if ( ppa_hook_set_inactivity_fn != NULL )
+    {
+        ppa_hook_set_inactivity_fn((PPA_U_SESSION *)ct, extra_jiffies / HZ);
+    }
+#endif
+
 }
 EXPORT_SYMBOL_GPL(__nf_ct_refresh_acct);
 
@@ -1037,6 +1197,10 @@ void nf_ct_iterate_cleanup(struct net *net,
 	struct nf_conn *ct;
 	unsigned int bucket = 0;
 
+#if defined(CONFIG_IFX_PPA_API) || defined(CONFIG_IFX_PPA_API_MODULE)
+        atomic_inc(&g_ppa_force_timeout);
+#endif
+
 	while ((ct = get_next_corpse(net, iter, data, &bucket)) != NULL) {
 		/* Time to push up daises... */
 		if (del_timer(&ct->timeout))
@@ -1045,6 +1209,10 @@ void nf_ct_iterate_cleanup(struct net *net,
 
 		nf_ct_put(ct);
 	}
+#if defined(CONFIG_IFX_PPA_API) || defined(CONFIG_IFX_PPA_API_MODULE)
+        atomic_dec(&g_ppa_force_timeout);
+#endif
+
 }
 EXPORT_SYMBOL_GPL(nf_ct_iterate_cleanup);
 

@@ -79,6 +79,14 @@
 #include <linux/mroute.h>
 #include <linux/netlink.h>
 #include <linux/tcp.h>
+#if defined(CONFIG_IFX_PPA_API) || defined(CONFIG_IFX_PPA_API_MODULE)
+  #include <net/ifx_ppa_api.h>
+#endif
+
+#ifdef CONFIG_LTQ_NETFILTER_PROCFS
+int sysctl_netfilter_postrouting_enable = 1;
+int sysctl_netfilter_output_enable = 1;
+#endif
 
 int sysctl_ip_default_ttl __read_mostly = IPDEFTTL;
 
@@ -95,6 +103,11 @@ int __ip_local_out(struct sk_buff *skb)
 
 	iph->tot_len = htons(skb->len);
 	ip_send_check(iph);
+
+#ifdef CONFIG_LTQ_NETFILTER_PROCFS
+       if (!sysctl_netfilter_output_enable)
+               return dst_output(skb);
+#endif
 	return nf_hook(PF_INET, NF_INET_LOCAL_OUT, skb, NULL, skb_dst(skb)->dev,
 		       dst_output);
 }
@@ -201,6 +214,22 @@ static inline int ip_finish_output2(struct sk_buff *skb)
 		skb = skb2;
 	}
 
+#if defined(CONFIG_IFX_PPA_API) || defined(CONFIG_IFX_PPA_API_MODULE)
+        if ( ppa_hook_session_add_fn != NULL )
+        {
+            struct nf_conn *ct;
+
+            enum ip_conntrack_info ctinfo;
+            uint32_t flags;
+    
+            ct = nf_ct_get(skb, &ctinfo);
+    
+            flags = 0;  //  post routing
+            flags |= CTINFO2DIR(ctinfo) == IP_CT_DIR_ORIGINAL ? PPA_F_SESSION_ORG_DIR : PPA_F_SESSION_REPLY_DIR;
+    
+            ppa_hook_session_add_fn(skb, ct, flags);
+        }
+#endif
 	if (dst->hh)
 		return neigh_hh_output(dst->hh, skb);
 	else if (dst->neighbour)
@@ -231,8 +260,14 @@ static int ip_finish_output(struct sk_buff *skb)
 #endif
 	if (skb->len > ip_skb_dst_mtu(skb) && !skb_is_gso(skb))
 		return ip_fragment(skb, ip_finish_output2);
-	else
+	else {
+		skb_mark_priority(skb);
+#ifdef CONFIG_LTQ_NETFILTER_PROCFS
+               if (!sysctl_netfilter_postrouting_enable)
+                       return ip_finish_output2(skb);
+#endif
 		return ip_finish_output2(skb);
+	}
 }
 
 int ip_mc_output(struct sk_buff *skb)
@@ -268,10 +303,16 @@ int ip_mc_output(struct sk_buff *skb)
 #endif
 		) {
 			struct sk_buff *newskb = skb_clone(skb, GFP_ATOMIC);
-			if (newskb)
-				NF_HOOK(PF_INET, NF_INET_POST_ROUTING, newskb,
+			if (newskb) {
+#ifdef CONFIG_LTQ_NETFILTER_PROCFS
+			if (!sysctl_netfilter_postrouting_enable)
+				ip_dev_loopback_xmit(newskb);
+			else
+#endif
+			NF_HOOK(PF_INET, NF_INET_POST_ROUTING, newskb,
 					NULL, newskb->dev,
 					ip_dev_loopback_xmit);
+			}
 		}
 
 		/* Multicasts with ttl 0 must not go beyond the host */
@@ -284,9 +325,15 @@ int ip_mc_output(struct sk_buff *skb)
 
 	if (rt->rt_flags&RTCF_BROADCAST) {
 		struct sk_buff *newskb = skb_clone(skb, GFP_ATOMIC);
-		if (newskb)
+		if (newskb) {
+#ifdef CONFIG_LTQ_NETFILTER_PROCFS
+                        if (!sysctl_netfilter_postrouting_enable)
+                                ip_dev_loopback_xmit(newskb);
+                        else
+#endif
 			NF_HOOK(PF_INET, NF_INET_POST_ROUTING, newskb, NULL,
 				newskb->dev, ip_dev_loopback_xmit);
+		}
 	}
 
 	return NF_HOOK_COND(PF_INET, NF_INET_POST_ROUTING, skb, NULL, skb->dev,

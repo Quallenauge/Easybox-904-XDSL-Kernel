@@ -192,6 +192,9 @@ struct inet6_dev
 	struct ipv6_devstat	stats;
 	unsigned long		tstamp; /* ipv6InterfaceTable update timestamp */
 	struct rcu_head		rcu;
+	
+	/* hsubj add to record remote radvd server ipv6 address */
+	struct in6_addr	radvd_addr;	
 };
 
 static inline void ipv6_eth_mc_map(struct in6_addr *addr, char *buf)

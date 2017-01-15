@@ -17,6 +17,17 @@
 #include <linux/netfilter_bridge.h>
 #include "br_private.h"
 
+/* Terry 20131115, for IP options */
+#include <net/ip.h>
+#include <linux/ip.h>
+#include <linux/if_ether.h>
+
+#if defined(CONFIG_LTQ_NETFILTER_PROCFS) && (defined(CONFIG_BRIDGE_NF_EBTABLES) || defined(CONFIG_BRIDGE_NF_EBTABLES_MODULE))
+extern int brnf_filter_pre_routing_enable;
+extern int brnf_filter_local_in_enable;
+#endif
+
+
 /* Bridge group multicast address 802.1d (pg 51). */
 const u8 br_group_address[ETH_ALEN] = { 0x01, 0x80, 0xc2, 0x00, 0x00, 0x00 };
 
@@ -30,12 +41,60 @@ static void br_pass_frame_up(struct net_bridge *br, struct sk_buff *skb)
 	indev = skb->dev;
 	skb->dev = brdev;
 
+/* Terry 20130517, Add some bridge related information to improve igmpproxy's performance. */
+#define	IP_OPT_LEN	4	/* 4*4 bytes */
+/*
+ * 0. swport - LTQ switch port.
+ * 1. rtlswport - RTL switch port.
+ * 2. brport - Bridge port.
+ * 3. brifindex - Bridge interface index.
+ */
+#if 1
+	if (skb->pkt_type == PACKET_MULTICAST && indev) {
+		struct iphdr *iph = (struct iphdr *)(((char *)eth_hdr(skb)) + sizeof(struct ethhdr));
+		
+		if ((iph->protocol == 0x02 /* IGMP */) && iph->ihl >= (5 + IP_OPT_LEN + 1)) {
+			int *ip_opt_ptr = (int *)(((char *)iph) + 5 * sizeof(int));
+			int *new_ip_opt_ptr = NULL;
+			int opt_len = iph->ihl - 5;
+			int i;
+
+			/* Check option header */
+			for (i = 0; i <= (opt_len - (IP_OPT_LEN + 1)); i++) {
+				char *ip_opt_c = &ip_opt_ptr[i];
+				if (ip_opt_c[0] == 0x7F && (ip_opt_c[1] == (IP_OPT_LEN + 1) * 4)) {
+					new_ip_opt_ptr = &ip_opt_ptr[i + 1];
+					break;
+				}
+			}
+			
+			if (new_ip_opt_ptr != NULL) {
+				new_ip_opt_ptr[3] = indev->ifindex;
+				if (indev->br_port) {
+					new_ip_opt_ptr[2] = indev->br_port->port_no;
+				} else {
+					printk("[%s] Can't find port info for ifindex %d\n", __FUNCTION__, indev->ifindex);
+				}
+				ip_send_check(iph);
+			}
+		}
+	}
+#endif
+	
+#if defined(CONFIG_LTQ_NETFILTER_PROCFS) && (defined(CONFIG_BRIDGE_NF_EBTABLES) || defined(CONFIG_BRIDGE_NF_EBTABLES_MODULE))
+       if (!brnf_filter_local_in_enable)
+               return netif_receive_skb(skb);
+#endif
 	NF_HOOK(PF_BRIDGE, NF_BR_LOCAL_IN, skb, indev, NULL,
 		netif_receive_skb);
 }
 
 /* note: already called with rcu_read_lock (preempt_disabled) */
+#ifdef CONFIG_LTQ_BR_OPT
+int __bridge br_handle_frame_finish(struct sk_buff *skb)
+#else
 int br_handle_frame_finish(struct sk_buff *skb)
+#endif
 {
 	const unsigned char *dest = eth_hdr(skb)->h_dest;
 	struct net_bridge_port *p = rcu_dereference(skb->dev->br_port);
@@ -159,6 +218,11 @@ forward:
 		if (!compare_ether_addr(p->br->dev->dev_addr, dest))
 			skb->pkt_type = PACKET_HOST;
 
+#if defined(CONFIG_LTQ_NETFILTER_PROCFS) && (defined(CONFIG_BRIDGE_NF_EBTABLES) || defined(CONFIG_BRIDGE_NF_EBTABLES_MODULE))
+               if (!brnf_filter_pre_routing_enable)
+                       br_handle_frame_finish(skb);
+	       else
+#endif
 		NF_HOOK(PF_BRIDGE, NF_BR_PRE_ROUTING, skb, skb->dev, NULL,
 			br_handle_frame_finish);
 		break;
