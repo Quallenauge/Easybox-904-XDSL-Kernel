@@ -242,6 +242,56 @@ int generic_permission(struct inode *inode, int mask,
 	return -EACCES;
 }
 
+/*
+ * We _really_ want to just do "generic_permission()" without
+ * even looking at the inode->i_op values. So we keep a cache
+ * flag in inode->i_opflags, that says "this has not special
+ * permission function, use the fast case".
+ */
+static inline int do_inode_permission(struct inode *inode, int mask)
+{
+        if (unlikely(!(inode->i_opflags & IOP_FASTPERM))) {
+                if (likely(inode->i_op->permission))
+                        return inode->i_op->permission(inode, mask);
+
+                /* This gets set once for the inode lifetime */
+                spin_lock(&inode->i_lock);
+                inode->i_opflags |= IOP_FASTPERM;
+                spin_unlock(&inode->i_lock);
+        }
+        return generic_permission(inode, mask, inode->i_op->check_acl);
+}
+
+/**
+ * inode_only_permission  -  check access rights to a given inode only
+ * @inode:	inode to check permissions on
+ * @mask:	right to check for (%MAY_READ, %MAY_WRITE, %MAY_EXEC, ...)
+ *
+ * Uses to check read/write/execute permissions on an inode directly, we do
+ * not check filesystem permissions.
+ */
+int inode_only_permission(struct inode *inode, int mask)
+{
+	int retval;
+
+	/*
+	 * Nobody gets write access to an immutable file.
+	 */
+	if (unlikely(mask & MAY_WRITE) && IS_IMMUTABLE(inode))
+		return -EACCES;
+
+	retval = do_inode_permission(inode, mask);
+	if (retval)
+		return retval;
+
+	retval = devcgroup_inode_permission(inode, mask);
+	if (retval)
+		return retval;
+
+	return security_inode_permission(inode, mask);
+}
+EXPORT_SYMBOL(inode_only_permission);
+
 /**
  * inode_permission  -  check for access rights to a given inode
  * @inode:	inode to check permission on
@@ -254,8 +304,6 @@ int generic_permission(struct inode *inode, int mask,
  */
 int inode_permission(struct inode *inode, int mask)
 {
-	int retval;
-
 	if (mask & MAY_WRITE) {
 		umode_t mode = inode->i_mode;
 
@@ -266,27 +314,9 @@ int inode_permission(struct inode *inode, int mask)
 		    (S_ISREG(mode) || S_ISDIR(mode) || S_ISLNK(mode)))
 			return -EROFS;
 
-		/*
-		 * Nobody gets write access to an immutable file.
-		 */
-		if (IS_IMMUTABLE(inode))
-			return -EACCES;
 	}
 
-	if (inode->i_op->permission)
-		retval = inode->i_op->permission(inode, mask);
-	else
-		retval = generic_permission(inode, mask, inode->i_op->check_acl);
-
-	if (retval)
-		return retval;
-
-	retval = devcgroup_inode_permission(inode, mask);
-	if (retval)
-		return retval;
-
-	return security_inode_permission(inode,
-			mask & (MAY_READ|MAY_WRITE|MAY_EXEC|MAY_APPEND));
+	return inode_only_permission(inode, mask);
 }
 
 /**

@@ -10,6 +10,13 @@
 #include <linux/ioctl.h>
 
 /*
+ * Maximum number of layers of fs stack.  Needs to be limited to
+ * prevent kernel stack overflow
+ */
+#define FILESYSTEM_MAX_STACK_DEPTH 2
+
+
+/*
  * It's silly to have NR_OPEN bigger than NR_FILE, but you can change
  * the file limit at runtime and only root can increase the per-process
  * nr_file rlimit, so it's safe to set up a ridiculously high absolute
@@ -719,6 +726,11 @@ static inline int mapping_writably_mapped(struct address_space *mapping)
 struct posix_acl;
 #define ACL_NOT_CACHED ((void *)(-1))
 
+#define IOP_FASTPERM    0x0001
+#define IOP_LOOKUP      0x0002
+#define IOP_NOFOLLOW    0x0004
+#define IOP_XATTR       0x0008
+
 struct inode {
 	struct hlist_node	i_hash;
 	struct list_head	i_list;		/* backing dev IO list */
@@ -727,6 +739,7 @@ struct inode {
 	unsigned long		i_ino;
 	atomic_t		i_count;
 	unsigned int		i_nlink;
+	unsigned short      i_opflags;
 	uid_t			i_uid;
 	gid_t			i_gid;
 	dev_t			i_rdev;
@@ -1385,6 +1398,12 @@ struct super_block {
 	 * generic_show_options()
 	 */
 	char *s_options;
+
+	/*
+	 * Indicates how deep in a filesystem stack this SB is
+	 */
+	int s_stack_depth;
+
 };
 
 extern struct timespec current_fs_time(struct super_block *sb);
@@ -1541,6 +1560,8 @@ struct inode_operations {
 			  loff_t len);
 	int (*fiemap)(struct inode *, struct fiemap_extent_info *, u64 start,
 		      u64 len);
+	struct file *(*open) (struct dentry *, struct file *,
+		      const struct cred *);
 };
 
 struct seq_file;
@@ -1921,6 +1942,7 @@ extern int do_fallocate(struct file *file, int mode, loff_t offset,
 extern long do_sys_open(int dfd, const char __user *filename, int flags,
 			int mode);
 extern struct file *filp_open(const char *, int, int);
+extern struct file *vfs_open(struct dentry *dentry, struct vfsmount *mnt, struct file *, const struct cred *);
 extern struct file * dentry_open(struct dentry *, struct vfsmount *, int,
 				 const struct cred *);
 extern int filp_close(struct file *, fl_owner_t id);
@@ -2114,6 +2136,7 @@ extern sector_t bmap(struct inode *, sector_t);
 #endif
 extern int notify_change(struct dentry *, struct iattr *);
 extern int inode_permission(struct inode *, int);
+extern int inode_only_permission(struct inode *, int);
 extern int generic_permission(struct inode *, int,
 		int (*check_acl)(struct inode *, int));
 

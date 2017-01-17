@@ -997,6 +997,24 @@ void release_mounts(struct list_head *head)
 	}
 }
 
+struct vfsmount *clone_private_mount(struct dentry *dentry, struct vfsmount *mnt)
+{
+	struct vfsmount *old_mnt = mnt;
+	struct vfsmount *new_mnt;
+
+	if (IS_MNT_UNBINDABLE(old_mnt))
+		return ERR_PTR(-EINVAL);
+
+	down_read(&namespace_sem);
+	new_mnt = clone_mnt(old_mnt, dentry, CL_PRIVATE);
+	up_read(&namespace_sem);
+	if (!new_mnt)
+		return ERR_PTR(-ENOMEM);
+
+	return new_mnt;
+}
+EXPORT_SYMBOL_GPL(clone_private_mount);
+
 void umount_tree(struct vfsmount *mnt, int propagate, struct list_head *kill)
 {
 	struct vfsmount *p;

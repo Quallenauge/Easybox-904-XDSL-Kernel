@@ -99,6 +99,9 @@ extern void mnt_pin(struct vfsmount *mnt);
 extern void mnt_unpin(struct vfsmount *mnt);
 extern int __mnt_is_readonly(struct vfsmount *mnt);
 
+struct path;
+extern struct vfsmount *clone_private_mount(struct dentry *dentry, struct vfsmount *mnt);
+
 static inline void mntput(struct vfsmount *mnt)
 {
 	if (mnt) {
