@@ -16,7 +16,10 @@
 
 static const char *ovl_whiteout_symlink = "(overlay-whiteout)";
 
-static int ovl_whiteout(struct dentry *upperdir, struct dentry *dentry)
+#define GLOBAL_ROOT_UID 0
+#define GLOBAL_ROOT_GID 0
+
+int ovl_whiteout(struct dentry *upperdir, struct dentry *dentry)
 {
 	int err;
 	struct dentry *newdentry;
@@ -38,8 +41,8 @@ static int ovl_whiteout(struct dentry *upperdir, struct dentry *dentry)
 	cap_raise(override_cred->cap_effective, CAP_SYS_ADMIN);
 	cap_raise(override_cred->cap_effective, CAP_DAC_OVERRIDE);
 	cap_raise(override_cred->cap_effective, CAP_FOWNER);
-	override_cred->fsuid = 0;
-	override_cred->fsgid = 0;
+	override_cred->fsuid = GLOBAL_ROOT_UID;
+	override_cred->fsgid = GLOBAL_ROOT_GID;
 	old_cred = override_creds(override_cred);
 
 	newdentry = lookup_one_len(dentry->d_name.name, upperdir,
@@ -144,6 +147,53 @@ static struct dentry *ovl_lookup_create(struct dentry *upperdir,
 out_dput:
 	dput(newdentry);
 	return ERR_PTR(err);
+}
+
+int ovl_create_real(struct inode *dir, struct dentry *newdentry,
+                    struct kstat *stat, const char *link,
+                    struct dentry *hardlink, bool debug)
+{
+        int err;
+
+        if (newdentry->d_inode)
+                return -ESTALE;
+
+        if (hardlink) {
+                err = ovl_do_link(hardlink, dir, newdentry, debug);
+        } else {
+                switch (stat->mode & S_IFMT) {
+                case S_IFREG:
+                        err = ovl_do_create(dir, newdentry, stat->mode, debug);
+                        break;
+
+                case S_IFDIR:
+                        err = ovl_do_mkdir(dir, newdentry, stat->mode, debug);
+                        break;
+
+                case S_IFCHR:
+                case S_IFBLK:
+                case S_IFIFO:
+                case S_IFSOCK:
+                        err = ovl_do_mknod(dir, newdentry,
+                                           stat->mode, stat->rdev, debug);
+                        break;
+
+                case S_IFLNK:
+                        err = ovl_do_symlink(dir, newdentry, link, debug);
+                        break;
+
+                default:
+                        err = -EPERM;
+                }
+        }
+        if (!err && WARN_ON(!newdentry->d_inode)) {
+                /*
+                 * Not quite sure if non-instantiated dentry is legal or not.
+                 * VFS doesn't seem to care so check and warn here.
+                 */
+                err = -ENOENT;
+        }
+        return err;
 }
 
 struct dentry *ovl_upper_create(struct dentry *upperdir, struct dentry *dentry,
@@ -304,6 +354,7 @@ static int ovl_create_object(struct dentry *dentry, int mode, dev_t rdev,
 		}
 	}
 	ovl_dentry_update(dentry, newdentry);
+	ovl_copyattr(newdentry->d_inode, inode);
 	d_instantiate(dentry, inode);
 	inode = NULL;
 	newdentry = NULL;
@@ -444,8 +495,11 @@ static int ovl_link(struct dentry *old, struct inode *newdir,
 		}
 		newinode = ovl_new_inode(old->d_sb, newdentry->d_inode->i_mode,
 				new->d_fsdata);
-		if (!newinode)
+		if (!newinode){
+			err = -ENOMEM;
 			goto link_fail;
+		}
+		ovl_copyattr(upperdir->d_inode, newinode);
 
 		ovl_dentry_version_inc(new->d_parent);
 		ovl_dentry_update(new, newdentry);

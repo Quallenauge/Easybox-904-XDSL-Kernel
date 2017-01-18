@@ -164,14 +164,31 @@ static int ovl_set_timestamps(struct dentry *upperdentry, struct kstat *stat)
 	return notify_change(upperdentry, &attr);
 }
 
-static int ovl_set_mode(struct dentry *upperdentry, umode_t mode)
+static int ovl_set_mode(struct dentry *upperdentry, struct kstat *stat)
 {
-	struct iattr attr = {
-		.ia_valid = ATTR_MODE,
-		.ia_mode = mode,
-	};
+	int err = 0;
 
-	return notify_change(upperdentry, &attr);
+	mutex_lock(&upperdentry->d_inode->i_mutex);
+	if (!S_ISLNK(stat->mode)) {
+			struct iattr attr = {
+					.ia_valid = ATTR_MODE,
+					.ia_mode = stat->mode,
+			};
+			err = notify_change(upperdentry, &attr);
+	}
+	if (!err) {
+			struct iattr attr = {
+					.ia_valid = ATTR_UID | ATTR_GID,
+					.ia_uid = stat->uid,
+					.ia_gid = stat->gid,
+			};
+			err = notify_change(upperdentry, &attr);
+	}
+	if (!err)
+			ovl_set_timestamps(upperdentry, stat);
+	mutex_unlock(&upperdentry->d_inode->i_mutex);
+
+	return err;
 }
 
 static int ovl_copy_up_locked(struct dentry *upperdir, struct dentry *dentry,
@@ -180,7 +197,6 @@ static int ovl_copy_up_locked(struct dentry *upperdir, struct dentry *dentry,
 {
 	int err;
 	struct path newpath;
-	umode_t mode = stat->mode;
 
 	/* Can't properly set mode on creation because of the umask */
 	stat->mode &= S_IFMT;
@@ -203,7 +219,7 @@ static int ovl_copy_up_locked(struct dentry *upperdir, struct dentry *dentry,
 
 	mutex_lock(&newpath.dentry->d_inode->i_mutex);
 	if (!S_ISLNK(stat->mode))
-		err = ovl_set_mode(newpath.dentry, mode);
+		err = ovl_set_mode(newpath.dentry, stat);
 	if (!err)
 		err = ovl_set_timestamps(newpath.dentry, stat);
 	mutex_unlock(&newpath.dentry->d_inode->i_mutex);
